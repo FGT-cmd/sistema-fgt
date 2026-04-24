@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
     // Processa áudio
     if (messageType === "audioMessage") {
       const base64 = await getMediaBase64(messageObj);
-      if (!base64) return NextResponse.json({ response: "Não consegui processar o áudio. Tente digitar." });
+      if (!base64) return NextResponse.json({ response: `[DEBUG áudio] messageObj recebido: ${JSON.stringify(messageObj).slice(0, 300)}` });
       message = await transcribeAudio(base64);
       if (!message) return NextResponse.json({ response: "Não entendi o áudio. Pode repetir digitando?" });
     }
@@ -95,7 +95,7 @@ export async function POST(req: NextRequest) {
     // Processa imagem
     if (messageType === "imageMessage") {
       const base64 = await getMediaBase64(messageObj);
-      if (!base64) return NextResponse.json({ response: "Não consegui abrir a imagem." });
+      if (!base64) return NextResponse.json({ response: `[DEBUG imagem] messageObj recebido: ${JSON.stringify(messageObj).slice(0, 300)}` });
       const imageInfo = await extractImageInfo(base64);
       message = `[Imagem recebida] ${imageInfo}`;
     }

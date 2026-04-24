@@ -1,0 +1,514 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  password      String?
+  role          String    @default("admin")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  googleAccessToken  String?
+  googleRefreshToken String?
+  googleTokenExpiry  DateTime?
+
+  accounts       Account[]
+  sessions       Session[]
+  clients        Client[]
+  deals          Deal[]
+  tasks          Task[]
+  todoTasks      TodoTask[]
+  interactions   Interaction[]
+  calendarEvents CalendarEvent[]
+  followUpSeqs   FollowUpSeq[]
+  monthlyGoals   MonthlyGoal[]
+  servicePlans   ServicePlan[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// CRM
+model Client {
+  id        String   @id @default(cuid())
+  name      String
+  email     String?
+  phone     String?
+  photo     String?
+  tags      String[]
+  notes     String?
+  status    String   @default("lead")
+  source    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  userId    String
+
+  user           User            @relation(fields: [userId], references: [id])
+  deals          Deal[]
+  interactions   Interaction[]
+  projects       Project[]
+  invoices       Invoice[]
+  contracts      Contract[]
+  anamnese       Anamnese?
+  workoutPlans   WorkoutPlan[]
+  bodyRecords    BodyRecord[]
+  checkIns       CheckIn[]
+  calendarEvents CalendarEvent[]
+  financialTxs   FinancialTx[]
+  followUpLogs   FollowUpLog[]
+  sales          Sale[]
+  files          StudentFile[]
+  todoTasks      TodoTask[]
+}
+
+model Deal {
+  id            String    @id @default(cuid())
+  title         String
+  value         Float?
+  stage         String    @default("lead")
+  priority      String    @default("medium")
+  nextAction    String?
+  expectedClose DateTime?
+  notes         String?
+  position      Int       @default(0)
+  source        String?
+  funnel        String?
+  objectives    String?
+  firstContact  DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  clientId      String
+  userId        String
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id])
+}
+
+model Interaction {
+  id       String   @id @default(cuid())
+  type     String
+  content  String
+  date     DateTime @default(now())
+  clientId String
+  userId   String
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id])
+}
+
+// Financeiro
+model FinancialTx {
+  id            String    @id @default(cuid())
+  type          String
+  description   String
+  amount        Float
+  category      String
+  status        String    @default("pendente")
+  dueDate       DateTime?
+  paidAt        DateTime?
+  paymentMethod String?
+  notes         String?
+  recurring     Boolean   @default(false)
+  recurringDay  Int?
+  clientId      String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  client Client? @relation(fields: [clientId], references: [id])
+}
+
+model Invoice {
+  id          String    @id @default(cuid())
+  number      String    @unique
+  amount      Float
+  status      String    @default("pendente")
+  dueDate     DateTime
+  paidAt      DateTime?
+  description String?
+  clientId    String
+  createdAt   DateTime  @default(now())
+
+  client Client @relation(fields: [clientId], references: [id])
+}
+
+model Contract {
+  id         String    @id @default(cuid())
+  title      String
+  value      Float
+  startDate  DateTime
+  endDate    DateTime?
+  status     String    @default("ativo")
+  recurrence String?
+  clientId   String
+  createdAt  DateTime  @default(now())
+
+  client Client @relation(fields: [clientId], references: [id])
+}
+
+model Sale {
+  id                String   @id @default(cuid())
+  description       String
+  totalAmount       Float
+  installmentsCount Int      @default(1)
+  negotiationNotes  String?
+  paymentMethod     String?
+  status            String   @default("ativo")
+  clientId          String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  client       Client        @relation(fields: [clientId], references: [id])
+  installments Installment[]
+}
+
+model Installment {
+  id       String    @id @default(cuid())
+  number   Int
+  amount   Float
+  dueDate  DateTime
+  paidAt   DateTime?
+  status   String    @default("pendente")
+  notes    String?
+  saleId   String
+
+  sale Sale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+}
+
+model StudentFile {
+  id        String   @id @default(cuid())
+  name      String
+  url       String
+  fileType  String
+  category  String   @default("outro")
+  size      Int?
+  clientId  String
+  createdAt DateTime @default(now())
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+}
+
+// Fitness
+model Anamnese {
+  id               String    @id @default(cuid())
+  objectives       String[]
+  healthHistory    String?
+  injuries         String?
+  medications      String?
+  fitnessLevel     String?
+  foodRestrictions String?
+  sleepHours       Float?
+  stressLevel      String?
+  workActivity     String?
+  availableDays    String[]
+  availableTime    Int?
+  additionalInfo   String?
+  completedAt      DateTime?
+  clientId         String    @unique
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+}
+
+model Exercise {
+  id          String   @id @default(cuid())
+  name        String
+  muscle      String
+  equipment   String?
+  videoUrl    String?
+  description String?
+  createdAt   DateTime @default(now())
+
+  workoutItems WorkoutItem[]
+}
+
+model WorkoutPlan {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  goal        String?
+  weeks       Int?
+  active      Boolean  @default(true)
+  clientId    String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  client      Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  workoutDays WorkoutDay[]
+}
+
+model WorkoutDay {
+  id          String @id @default(cuid())
+  name        String
+  dayOfWeek   String?
+  position    Int    @default(0)
+  planId      String
+
+  plan         WorkoutPlan   @relation(fields: [planId], references: [id], onDelete: Cascade)
+  workoutItems WorkoutItem[]
+}
+
+model WorkoutItem {
+  id         String @id @default(cuid())
+  sets       Int?
+  reps       String?
+  load       String?
+  rest       String?
+  notes      String?
+  position   Int    @default(0)
+  dayId      String
+  exerciseId String
+
+  day      WorkoutDay @relation(fields: [dayId], references: [id], onDelete: Cascade)
+  exercise Exercise   @relation(fields: [exerciseId], references: [id])
+}
+
+model BodyRecord {
+  id      String   @id @default(cuid())
+  date    DateTime @default(now())
+  weight  Float?
+  bodyFat Float?
+  waist   Float?
+  hip     Float?
+  chest   Float?
+  arm     Float?
+  thigh   Float?
+  calf    Float?
+  photos  String[]
+  notes   String?
+  clientId String
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+}
+
+model CheckIn {
+  id           String    @id @default(cuid())
+  weekDate     DateTime
+  training     Int?
+  nutrition    Int?
+  sleep        Int?
+  stress       Int?
+  energy       Int?
+  generalNotes String?
+  responded    Boolean   @default(false)
+  respondedAt  DateTime?
+  clientId     String
+  createdAt    DateTime  @default(now())
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+}
+
+// Agenda
+model CalendarEvent {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  start       DateTime
+  end         DateTime
+  allDay      Boolean  @default(false)
+  color       String?
+  type        String?
+  clientId    String?
+  userId      String
+  createdAt   DateTime @default(now())
+
+  client Client? @relation(fields: [clientId], references: [id])
+  user   User    @relation(fields: [userId], references: [id])
+}
+
+// Projetos e Tarefas
+model Project {
+  id          String    @id @default(cuid())
+  name        String
+  description String?
+  status      String    @default("em_andamento")
+  progress    Int       @default(0)
+  startDate   DateTime?
+  endDate     DateTime?
+  clientId    String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  client Client @relation(fields: [clientId], references: [id])
+  tasks  Task[]
+}
+
+model Task {
+  id          String    @id @default(cuid())
+  title       String
+  description String?
+  status      String    @default("todo")
+  priority    String    @default("medium")
+  dueDate     DateTime?
+  position    Int       @default(0)
+  projectId   String
+  userId      String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id])
+}
+
+// Planos de Serviço
+model ServicePlan {
+  id             String   @id @default(cuid())
+  name           String
+  description    String?
+  totalAmount    Float
+  installments   Int      @default(1)
+  durationMonths Int      @default(1)
+  active         Boolean  @default(true)
+  userId         String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+// Metas Mensais
+model MonthlyGoal {
+  id              String     @id @default(cuid())
+  month           Int
+  year            Int
+  revenueGoal     Float      @default(0)
+  newClientsGoal  Int        @default(0)
+  leadsGoal       Int        @default(0)
+  conversionGoal  Float      @default(0)
+  notes           String?
+  userId          String
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  user  User       @relation(fields: [userId], references: [id])
+  items GoalItem[]
+
+  @@unique([userId, month, year])
+}
+
+model GoalItem {
+  id        String      @id @default(cuid())
+  label     String
+  quantity  Int         @default(1)
+  unitPrice Float       @default(0)
+  position  Int         @default(0)
+  goalId    String
+
+  goal MonthlyGoal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+}
+
+// Follow-up
+model FollowUpSeq {
+  id        String   @id @default(cuid())
+  name      String
+  trigger   String
+  active    Boolean  @default(true)
+  userId    String
+  createdAt DateTime @default(now())
+
+  user  User           @relation(fields: [userId], references: [id])
+  steps FollowUpStep[]
+  logs  FollowUpLog[]
+}
+
+model FollowUpStep {
+  id        String @id @default(cuid())
+  channel   String
+  delayDays Int
+  subject   String?
+  template  String
+  position  Int    @default(0)
+  seqId     String
+
+  seq FollowUpSeq @relation(fields: [seqId], references: [id], onDelete: Cascade)
+}
+
+model FollowUpLog {
+  id       String   @id @default(cuid())
+  channel  String
+  status   String   @default("enviado")
+  sentAt   DateTime @default(now())
+  clientId String
+  seqId    String
+
+  client Client      @relation(fields: [clientId], references: [id])
+  seq    FollowUpSeq @relation(fields: [seqId], references: [id])
+}
+
+// Tarefas standalone (V1 core)
+// status: pending | done
+// type: general | student | financial | content | administrative
+// source: manual | whatsapp | automatic
+model TodoTask {
+  id          String    @id @default(cuid())
+  title       String
+  description String?
+  dueDate     DateTime?
+  status      String    @default("pending")
+  type        String    @default("general")
+  source      String    @default("manual")
+  position    Int       @default(0)
+  urgent      Boolean?
+  important   Boolean?
+  clientId    String?
+  userId      String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id])
+  client   Client?   @relation(fields: [clientId], references: [id])
+  subtasks Subtask[]
+}
+
+model Subtask {
+  id        String   @id @default(cuid())
+  title     String
+  completed Boolean  @default(false)
+  position  Int      @default(0)
+  taskId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  task TodoTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+}

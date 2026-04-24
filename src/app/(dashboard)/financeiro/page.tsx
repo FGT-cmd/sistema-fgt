@@ -51,9 +51,23 @@ type Sale = {
 type Client = { id: string; name: string };
 
 // ─── Constants ───────────────────────────────────────────────────
-const EXPENSE_CATS = ["Pessoal", "Ferramentas e Plataformas", "Conhecimento", "Impostos", "Equipamentos", "Tráfego Pago", "Marketing", "Estagiário", "Outros"];
-const INCOME_CATS  = ["Consultoria", "Aulas Presenciais", "Mensalidade", "Outros"];
+const EXPENSE_CATS = ["Ferramenta/Software", "Marketing", "Operação", "Imposto", "Equipe/Serviço", "Despesas Gerais"];
+const INCOME_CATS  = ["Trimestral", "Semestral", "Anual", "Personalizado", "Renovação", "Parcela", "Extra"];
 const PAYMENT_METHODS = ["Pix", "Débito", "Crédito", "Transferência", "Boleto", "Dinheiro"];
+const STATUSES_RECEITA = [
+  { value: "previsto",  label: "PREVISTO" },
+  { value: "pendente",  label: "A RECEBER" },
+  { value: "pago",      label: "RECEBIDO" },
+  { value: "atrasado",  label: "ATRASADO" },
+  { value: "cancelado", label: "CANCELADO" },
+];
+const STATUSES_DESPESA = [
+  { value: "previsto",  label: "PREVISTO" },
+  { value: "pendente",  label: "A PAGAR" },
+  { value: "pago",      label: "PAGO" },
+  { value: "atrasado",  label: "ATRASADO" },
+  { value: "cancelado", label: "CANCELADO" },
+];
 const MONTHS = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
 
 type TabKey = "fluxo" | "pagar" | "faturamento" | "parcelas";
@@ -90,12 +104,17 @@ function inMonth(d: Date, dateStr?: string | null) {
 
 // ─── Status badge ─────────────────────────────────────────────────
 function StatusBadge({ status, type, dueDate, onClick }: { status: string; type: "receita"|"despesa"; dueDate?: string|null; onClick?: () => void }) {
-  const paid = status === "pago";
   const over = isOverdue(status, dueDate);
-  const label = paid ? (type === "receita" ? "RECEBIDO" : "PAGO") : over ? "VENCIDO" : (type === "receita" ? "A RECEBER" : "A PAGAR");
-  const cls = paid ? "bg-green-100 text-green-700 hover:bg-green-200"
-    : over ? "bg-red-100 text-red-600 hover:bg-red-200"
-    : "bg-amber-100 text-amber-700 hover:bg-amber-200";
+  const effectiveStatus = (status === "pendente" && over) ? "atrasado" : status;
+
+  const config: Record<string, { label: string; cls: string }> = {
+    previsto:  { label: "PREVISTO",                                    cls: "bg-blue-50 text-blue-600 hover:bg-blue-100" },
+    pendente:  { label: type === "receita" ? "A RECEBER" : "A PAGAR",  cls: "bg-amber-100 text-amber-700 hover:bg-amber-200" },
+    pago:      { label: type === "receita" ? "RECEBIDO" : "PAGO",      cls: "bg-green-100 text-green-700 hover:bg-green-200" },
+    atrasado:  { label: "ATRASADO",                                     cls: "bg-red-100 text-red-600 hover:bg-red-200" },
+    cancelado: { label: "CANCELADO",                                    cls: "bg-gray-100 text-gray-400 hover:bg-gray-200" },
+  };
+  const { label, cls } = config[effectiveStatus] || config["pendente"];
   return (
     <button onClick={onClick} className={`text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap transition-colors ${cls} ${onClick ? "cursor-pointer" : "cursor-default"}`}>
       {label}
@@ -183,8 +202,7 @@ function NovaDespesaModal({ onClose, onSave }: { onClose: () => void; onSave: (t
           <label className="block text-xs font-semibold text-gray-600 mb-1">Status</label>
           <select value={form.status} onChange={e => setForm({...form, status: e.target.value})}
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400">
-            <option value="pendente">A PAGAR</option>
-            <option value="pago">PAGO</option>
+            {STATUSES_DESPESA.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
           </select>
         </div>
         <div>
@@ -273,8 +291,7 @@ function NovaReceitaModal({ clients, onClose, onSave }: { clients: Client[]; onC
           <label className="block text-xs font-semibold text-gray-600 mb-1">Status</label>
           <select value={form.status} onChange={e => setForm({...form, status: e.target.value})}
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400">
-            <option value="pendente">A RECEBER</option>
-            <option value="pago">RECEBIDO</option>
+            {STATUSES_RECEITA.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
           </select>
         </div>
         <div className="flex gap-2 pt-2">
@@ -1005,8 +1022,7 @@ function FluxoPanel({ type, rows, clients, onToggle, onDelete, onAdd }: {
                 <td className="px-2 py-1.5">
                   <select value={newRow.status} onChange={e=>setNewRow({...newRow,status:e.target.value})}
                     className="w-full text-xs border border-gray-200 rounded px-1.5 py-1 focus:outline-none focus:border-indigo-400 bg-white">
-                    <option value="pendente">{isIncome?"A RECEBER":"A PAGAR"}</option>
-                    <option value="pago">{isIncome?"RECEBIDO":"PAGO"}</option>
+                    {(isIncome ? STATUSES_RECEITA : STATUSES_DESPESA).map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                   </select>
                 </td>
                 <td className="px-2 py-1.5">

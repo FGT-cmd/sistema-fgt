@@ -10,16 +10,18 @@ const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY;
 const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
-async function getMediaBase64(messageObj: Record<string, unknown>): Promise<string | null> {
+async function getMediaBase64(messageData: Record<string, unknown>): Promise<string | null> {
   try {
     const res = await fetch(`${EVOLUTION_API_URL}/chat/getBase64FromMediaMessage/${EVOLUTION_INSTANCE}`, {
       method: "POST",
       headers: { "apikey": EVOLUTION_API_KEY!, "Content-Type": "application/json" },
-      body: JSON.stringify({ message: messageObj, convertToMp4: false }),
+      body: JSON.stringify({ message: messageData, convertToMp4: false }),
     });
     const data = await res.json();
+    console.log("[getMediaBase64] response:", JSON.stringify(data).slice(0, 200));
     return data.base64 || null;
-  } catch {
+  } catch (err) {
+    console.error("[getMediaBase64] error:", err);
     return null;
   }
 }

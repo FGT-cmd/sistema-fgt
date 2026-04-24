@@ -80,6 +80,15 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const phone: string = body.phone || body.from || "";
     const messageType: string = body.messageType || "text";
+
+    // Bloqueia grupos e números não autorizados
+    if (phone.includes("@g.us") || phone.includes("@broadcast")) {
+      return NextResponse.json({ response: null }, { status: 200 });
+    }
+    const ALLOWED_PHONE = process.env.ALLOWED_PHONE;
+    if (ALLOWED_PHONE && !phone.includes(ALLOWED_PHONE)) {
+      return NextResponse.json({ response: null }, { status: 200 });
+    }
     const messageObj: Record<string, unknown> = body.messageObj || {};
 
     let message: string = body.message || body.text || "";

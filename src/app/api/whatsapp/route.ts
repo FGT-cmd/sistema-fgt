@@ -4,29 +4,105 @@ import { prisma } from "@/lib/prisma";
 import { getDefaultUser } from "@/lib/user";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
 const WHATSAPP_SECRET = process.env.WHATSAPP_SECRET;
+const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL;
+const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY;
+const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE;
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+
+async function getMediaBase64(messageObj: Record<string, unknown>): Promise<string | null> {
+  try {
+    const res = await fetch(`${EVOLUTION_API_URL}/chat/getBase64FromMediaMessage/${EVOLUTION_INSTANCE}`, {
+      method: "POST",
+      headers: { "apikey": EVOLUTION_API_KEY!, "Content-Type": "application/json" },
+      body: JSON.stringify({ message: messageObj, convertToMp4: false }),
+    });
+    const data = await res.json();
+    return data.base64 || null;
+  } catch {
+    return null;
+  }
+}
+
+async function transcribeAudio(base64: string): Promise<string> {
+  // Remove data URL prefix se existir
+  const b64 = base64.includes(",") ? base64.split(",")[1] : base64;
+  const buffer = Buffer.from(b64, "base64");
+  const blob = new Blob([buffer], { type: "audio/ogg" });
+
+  const formData = new FormData();
+  formData.append("file", blob, "audio.ogg");
+  formData.append("model", "whisper-large-v3");
+  formData.append("language", "pt");
+
+  const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${GROQ_API_KEY}` },
+    body: formData,
+  });
+  const data = await res.json();
+  return data.text || "";
+}
+
+async function extractImageInfo(base64: string): Promise<string> {
+  const b64 = base64.includes(",") ? base64.split(",")[1] : base64;
+  const mediaType = base64.includes("png") ? "image/png" : "image/jpeg";
+
+  const res = await anthropic.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 512,
+    messages: [{
+      role: "user",
+      content: [
+        {
+          type: "image",
+          source: { type: "base64", media_type: mediaType, data: b64 },
+        },
+        {
+          type: "text",
+          text: "Analise esta imagem. Se for um comprovante de pagamento, extraia: valor, data, nome/descrição, forma de pagamento. Se for outra coisa, descreva o que é. Responda em português, de forma curta e direta.",
+        },
+      ],
+    }],
+  });
+  return (res.content[0] as { type: string; text: string }).text;
+}
 
 export async function POST(req: NextRequest) {
   try {
-    // Autenticação básica
     const secret = req.headers.get("x-whatsapp-secret");
     if (WHATSAPP_SECRET && secret !== WHATSAPP_SECRET) {
       return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
     }
 
     const body = await req.json();
-    const message: string = body.message || body.text || "";
     const phone: string = body.phone || body.from || "";
+    const messageType: string = body.messageType || "text";
+    const messageObj: Record<string, unknown> = body.messageObj || {};
 
-    if (!message) {
-      return NextResponse.json({ response: "Não entendi a mensagem." });
+    let message: string = body.message || body.text || "";
+
+    // Processa áudio
+    if (messageType === "audioMessage") {
+      const base64 = await getMediaBase64(messageObj);
+      if (!base64) return NextResponse.json({ response: "Não consegui processar o áudio. Tente digitar." });
+      message = await transcribeAudio(base64);
+      if (!message) return NextResponse.json({ response: "Não entendi o áudio. Pode repetir digitando?" });
     }
+
+    // Processa imagem
+    if (messageType === "imageMessage") {
+      const base64 = await getMediaBase64(messageObj);
+      if (!base64) return NextResponse.json({ response: "Não consegui abrir a imagem." });
+      const imageInfo = await extractImageInfo(base64);
+      message = `[Imagem recebida] ${imageInfo}`;
+    }
+
+    if (!message) return NextResponse.json({ response: "Não entendi a mensagem." });
 
     const user = await getDefaultUser();
     const today = new Date().toISOString().slice(0, 10);
 
-    // Busca contexto do banco
     const [clients, pendingTasks, pendingFinancial] = await Promise.all([
       prisma.client.findMany({ select: { id: true, name: true, phone: true }, orderBy: { name: "asc" } }),
       prisma.todoTask.findMany({
@@ -95,15 +171,12 @@ REGRAS CRÍTICAS:
 
     const raw = (aiResponse.content[0] as { type: string; text: string }).text.trim();
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      return NextResponse.json({ response: "Não consegui processar sua mensagem. Tente de novo." });
-    }
+    if (!jsonMatch) return NextResponse.json({ response: "Não consegui processar sua mensagem. Tente de novo." });
 
     const parsed = JSON.parse(jsonMatch[0]);
     const { action, data } = parsed;
     let finalResponse = parsed.response;
 
-    // Executa a ação
     if (action === "create_task") {
       await prisma.todoTask.create({
         data: {
@@ -134,16 +207,10 @@ REGRAS CRÍTICAS:
 
     if (action === "mark_paid") {
       const tx = await prisma.financialTx.findFirst({
-        where: {
-          status: "pendente",
-          description: { contains: data.description, mode: "insensitive" },
-        },
+        where: { status: "pendente", description: { contains: data.description, mode: "insensitive" } },
       });
       if (tx) {
-        await prisma.financialTx.update({
-          where: { id: tx.id },
-          data: { status: "pago", paidAt: new Date() },
-        });
+        await prisma.financialTx.update({ where: { id: tx.id }, data: { status: "pago", paidAt: new Date() } });
         finalResponse = `✅ Pagamento de *${tx.description}* (R$${tx.amount}) marcado como recebido!`;
       } else {
         finalResponse = `Não encontrei nenhum lançamento pendente com esse nome.`;
@@ -163,12 +230,8 @@ REGRAS CRÍTICAS:
     }
 
     if (action === "day_summary") {
-      const todayTasks = pendingTasks.filter(t =>
-        t.dueDate && t.dueDate.toISOString().slice(0, 10) === today
-      );
-      const overdue = pendingTasks.filter(t =>
-        t.dueDate && t.dueDate.toISOString().slice(0, 10) < today
-      );
+      const todayTasks = pendingTasks.filter(t => t.dueDate && t.dueDate.toISOString().slice(0, 10) === today);
+      const overdue = pendingTasks.filter(t => t.dueDate && t.dueDate.toISOString().slice(0, 10) < today);
       finalResponse = `☀️ *Resumo do dia (${today}):*\n\n` +
         `📋 Tarefas para hoje: ${todayTasks.length}\n` +
         (todayTasks.map(t => `  • ${t.title}`).join("\n") || "") +

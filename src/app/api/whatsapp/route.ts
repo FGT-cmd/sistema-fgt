@@ -78,11 +78,13 @@ AÇÕES E CAMPOS:
 - pending_financial: {} (lista pendências financeiras)
 - unknown: {} (quando não entender)
 
-REGRAS:
-- Entenda datas naturais: "hoje", "amanhã", "sexta", etc.
-- Se mencionar nome de aluno, tente vincular ao clientId correto
-- Confirme ações antes de salvar (inclua na response um resumo do que vai fazer)
-- Seja direto e amigável, use emojis com moderação`;
+REGRAS CRÍTICAS:
+- NUNCA invente, altere ou substitua nomes mencionados na mensagem. Use EXATAMENTE o nome que está escrito.
+- NUNCA complete ou corrija nomes — se a pessoa escreveu "Marla Knod", use "Marla Knod", não invente outro nome.
+- Entenda datas naturais: "hoje", "amanhã", "sexta", etc. Converta para YYYY-MM-DD.
+- Se mencionar nome de aluno cadastrado, tente vincular ao clientId correto comparando com a lista acima.
+- Seja direto e amigável, use emojis com moderação.
+- Confirme a ação na response mostrando exatamente o que vai salvar.`;
 
     const aiResponse = await anthropic.messages.create({
       model: "claude-sonnet-4-6",

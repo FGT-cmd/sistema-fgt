@@ -76,12 +76,9 @@ function NovoAlunoModal({ onClose, onSave }: { onClose: () => void; onSave: (a: 
     name: "", email: "", phone: "", status: "ativo", source: "",
     planName: "", planDetails: "", paymentMethod: "Pix",
     negotiationNotes: "", notes: "",
-    totalAmount: "", installments: "1", firstDueDate: new Date().toISOString().slice(0, 10),
   });
   const [saving, setSaving] = useState(false);
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
-  const total = parseFloat(form.totalAmount.replace(",", ".")) || 0;
-  const count = parseInt(form.installments) || 1;
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -89,7 +86,7 @@ function NovoAlunoModal({ onClose, onSave }: { onClose: () => void; onSave: (a: 
     setSaving(true);
     const res = await fetch("/api/alunos", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...form, totalAmount: total, installments: count }),
+      body: JSON.stringify(form),
     });
     onSave(await res.json());
     setSaving(false);
@@ -97,114 +94,87 @@ function NovoAlunoModal({ onClose, onSave }: { onClose: () => void; onSave: (a: 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[92vh]">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl flex flex-col max-h-[92vh]">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
-          <h2 className="text-lg font-bold text-gray-900">Novo Aluno</h2>
+          <div>
+            <h2 className="text-lg font-bold text-gray-900">Novo Aluno</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Após cadastrar, você registra o pagamento na ficha do aluno</p>
+          </div>
           <button onClick={onClose}><X className="w-5 h-5 text-gray-400" /></button>
         </div>
-        <form onSubmit={handleSave} className="overflow-y-auto flex-1 px-6 py-5">
-          <div className="grid grid-cols-2 gap-x-6 gap-y-4">
+        <form onSubmit={handleSave} className="overflow-y-auto flex-1 px-6 py-5 space-y-4">
 
-            {/* Coluna 1 — Dados pessoais */}
-            <div className="space-y-3">
-              <p className="text-[11px] font-bold text-gray-400 uppercase">Dados pessoais</p>
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-1">Nome *</label>
-                <input required autoFocus value={form.name} onChange={e => set("name", e.target.value)} placeholder="Nome completo" className={inputCls} />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-1">Telefone</label>
-                <input value={form.phone} onChange={e => set("phone", e.target.value)} placeholder="(55) 99999-9999" className={inputCls} />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-1">Email</label>
-                <input type="email" value={form.email} onChange={e => set("email", e.target.value)} placeholder="email@exemplo.com" className={inputCls} />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-1">Status</label>
-                <select value={form.status} onChange={e => set("status", e.target.value)} className={inputCls}>
-                  {STATUS_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-1">De qual funil veio?</label>
-                <select value={form.source} onChange={e => set("source", e.target.value)} className={inputCls}>
-                  <option value="">Selecionar...</option>
-                  {FUNIL_OPTIONS.map(f => <option key={f} value={f}>{f}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-1">Observações</label>
-                <textarea rows={3} value={form.notes} onChange={e => set("notes", e.target.value)}
-                  placeholder="Notas gerais..." className={`${inputCls} resize-none`} />
-              </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Nome *</label>
+              <input required autoFocus value={form.name} onChange={e => set("name", e.target.value)} placeholder="Nome completo" className={inputCls} />
             </div>
-
-            {/* Coluna 2 — Plano & Financeiro */}
-            <div className="space-y-3">
-              <p className="text-[11px] font-bold text-gray-400 uppercase">Plano & Financeiro</p>
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-1">Plano</label>
-                <select value={form.planName} onChange={e => set("planName", e.target.value)} className={inputCls}>
-                  <option value="">Selecionar...</option>
-                  {PLAN_OPTIONS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-                </select>
-              </div>
-              {planNeedsDetails(form.planName) && (
-                <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl">
-                  <p className="text-xs font-bold text-indigo-600 mb-1.5">
-                    {form.planName === "Parceria/Collab" ? "Descreva a parceria / collab" : "Descreva o plano personalizado"}
-                  </p>
-                  <textarea rows={2} value={form.planDetails} onChange={e => set("planDetails", e.target.value)}
-                    placeholder={form.planName === "Parceria/Collab" ? "Ex: 3 meses grátis em troca de divulgação..." : "Ex: 2x por semana online + 1x presencial..."}
-                    className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white resize-none" />
-                </div>
-              )}
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-1">Forma de Pagamento</label>
-                <select value={form.paymentMethod} onChange={e => set("paymentMethod", e.target.value)} className={inputCls}>
-                  {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
-              </div>
-
-              {/* Financeiro */}
-              <div className="p-3 bg-gray-50 border border-gray-200 rounded-xl space-y-3">
-                <p className="text-[11px] font-bold text-gray-400 uppercase">Gerar lançamento financeiro</p>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-500 mb-1">Valor total (R$)</label>
-                  <input value={form.totalAmount} onChange={e => set("totalAmount", e.target.value)}
-                    placeholder="0,00" type="number" step="0.01" className={inputCls} />
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-500 mb-1">Parcelas</label>
-                    <input value={form.installments} onChange={e => set("installments", e.target.value)}
-                      type="number" min="1" max="60" className={inputCls} />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-500 mb-1">1ª parcela em</label>
-                    <input type="date" value={form.firstDueDate} onChange={e => set("firstDueDate", e.target.value)} className={inputCls} />
-                  </div>
-                </div>
-                {total > 0 && (
-                  <div className="text-xs text-indigo-600 font-semibold bg-indigo-50 rounded-lg px-3 py-2">
-                    {count}x de {fmt(total / count)} = {fmt(total)}
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-1">Negociação</label>
-                <textarea rows={2} value={form.negotiationNotes} onChange={e => set("negotiationNotes", e.target.value)}
-                  placeholder="Condições especiais, descontos..." className={`${inputCls} resize-none`} />
-              </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Telefone</label>
+              <input value={form.phone} onChange={e => set("phone", e.target.value)} placeholder="(55) 99999-9999" className={inputCls} />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Status</label>
+              <select value={form.status} onChange={e => set("status", e.target.value)} className={inputCls}>
+                {STATUS_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+              </select>
+            </div>
+            <div className="col-span-2">
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Email</label>
+              <input type="email" value={form.email} onChange={e => set("email", e.target.value)} placeholder="email@exemplo.com" className={inputCls} />
             </div>
           </div>
 
-          <div className="flex gap-2 mt-5 pt-4 border-t border-gray-100">
+          <div className="border-t border-gray-100 pt-4 grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Plano</label>
+              <select value={form.planName} onChange={e => set("planName", e.target.value)} className={inputCls}>
+                <option value="">Selecionar...</option>
+                {PLAN_OPTIONS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Forma de Pagamento</label>
+              <select value={form.paymentMethod} onChange={e => set("paymentMethod", e.target.value)} className={inputCls}>
+                {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+            <div className="col-span-2">
+              <label className="block text-xs font-semibold text-gray-500 mb-1">De qual funil veio?</label>
+              <select value={form.source} onChange={e => set("source", e.target.value)} className={inputCls}>
+                <option value="">Selecionar...</option>
+                {FUNIL_OPTIONS.map(f => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </div>
+            {planNeedsDetails(form.planName) && (
+              <div className="col-span-2 p-3 bg-indigo-50 border border-indigo-200 rounded-xl">
+                <p className="text-xs font-bold text-indigo-600 mb-1.5">
+                  {form.planName === "Parceria/Collab" ? "Descreva a parceria / collab" : "Descreva o plano personalizado"}
+                </p>
+                <textarea rows={2} value={form.planDetails} onChange={e => set("planDetails", e.target.value)}
+                  placeholder={form.planName === "Parceria/Collab" ? "Ex: 3 meses grátis em troca de divulgação..." : "Ex: 2x por semana online + 1x presencial..."}
+                  className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white resize-none" />
+              </div>
+            )}
+          </div>
+
+          <div className="border-t border-gray-100 pt-4 space-y-3">
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Negociação</label>
+              <textarea rows={2} value={form.negotiationNotes} onChange={e => set("negotiationNotes", e.target.value)}
+                placeholder="Condições especiais, descontos, acordos..." className={`${inputCls} resize-none`} />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Observações</label>
+              <textarea rows={2} value={form.notes} onChange={e => set("notes", e.target.value)}
+                placeholder="Notas gerais..." className={`${inputCls} resize-none`} />
+            </div>
+          </div>
+
+          <div className="flex gap-2 pt-2 border-t border-gray-100">
             <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm border border-gray-200 text-gray-600 hover:bg-gray-50">Cancelar</button>
             <button type="submit" disabled={saving} className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-50" style={{ background: "#6366f1" }}>
-              {saving ? "Salvando..." : "Cadastrar aluno"}
+              {saving ? "Salvando..." : "Cadastrar e registrar pagamento →"}
             </button>
           </div>
         </form>
@@ -362,8 +332,9 @@ function ImportModal({ onClose, onImport }: { onClose: () => void; onImport: (al
 }
 
 // ─── Drawer Detalhe ───────────────────────────────────────────────
-function AlunoDrawer({ aluno, onClose, onUpdate, onDelete }: {
+function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm }: {
   aluno: Aluno; onClose: () => void; onUpdate: (a: Aluno) => void; onDelete: (id: string) => void;
+  autoOpenPayForm?: boolean;
 }) {
   const [editando, setEditando] = useState(false);
   const [form, setForm] = useState({
@@ -375,7 +346,7 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete }: {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
-  const [showPayForm, setShowPayForm] = useState(false);
+  const [showPayForm, setShowPayForm] = useState(autoOpenPayForm ?? false);
   const [payMode, setPayMode] = useState<"igual" | "personalizado">("igual");
   const [payForm, setPayForm] = useState({
     description: aluno.planName || "Plano",
@@ -661,16 +632,27 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete }: {
             </div>
 
             {/* Resumo */}
-            <div className="grid grid-cols-2 gap-2 mb-4">
-              <div className="bg-green-50 rounded-xl p-3 border border-green-100 text-center">
-                <p className="text-[10px] text-green-500 font-bold uppercase">Recebido</p>
-                <p className="text-base font-bold text-green-700">{fmt(pago)}</p>
+            {pago === 0 && pendente === 0 && !showPayForm ? (
+              <button onClick={() => setShowPayForm(true)}
+                className="w-full mb-4 py-4 rounded-xl border-2 border-dashed border-indigo-200 text-indigo-500 hover:bg-indigo-50 transition-colors text-sm font-medium flex flex-col items-center gap-1">
+                <DollarSign className="w-5 h-5" />
+                Nenhum pagamento registrado
+                <span className="text-xs text-indigo-400">Clique para registrar</span>
+              </button>
+            ) : (
+              <div className="grid grid-cols-2 gap-2 mb-4">
+                <div className="bg-green-50 rounded-xl p-3 border border-green-100 text-center">
+                  <p className="text-[10px] text-green-500 font-bold uppercase">Recebido</p>
+                  <p className="text-base font-bold text-green-700">{fmt(pago)}</p>
+                  <p className="text-[10px] text-green-400 mt-0.5">{allInstallments.filter(i => i.status === "pago").length} parcela{allInstallments.filter(i => i.status === "pago").length !== 1 ? "s" : ""}</p>
+                </div>
+                <div className={`rounded-xl p-3 border text-center ${vencidas.length > 0 ? "bg-red-50 border-red-100" : "bg-amber-50 border-amber-100"}`}>
+                  <p className={`text-[10px] font-bold uppercase ${vencidas.length > 0 ? "text-red-500" : "text-amber-500"}`}>Pendente</p>
+                  <p className={`text-base font-bold ${vencidas.length > 0 ? "text-red-700" : "text-amber-700"}`}>{fmt(pendente)}</p>
+                  {vencidas.length > 0 && <p className="text-[10px] text-red-400 mt-0.5">{vencidas.length} vencida{vencidas.length !== 1 ? "s" : ""}</p>}
+                </div>
               </div>
-              <div className={`rounded-xl p-3 border text-center ${vencidas.length > 0 ? "bg-red-50 border-red-100" : "bg-amber-50 border-amber-100"}`}>
-                <p className={`text-[10px] font-bold uppercase ${vencidas.length > 0 ? "text-red-500" : "text-amber-500"}`}>Pendente</p>
-                <p className={`text-base font-bold ${vencidas.length > 0 ? "text-red-700" : "text-amber-700"}`}>{fmt(pendente)}</p>
-              </div>
-            </div>
+            )}
 
             {/* Formulário novo pagamento */}
             {showPayForm && (
@@ -742,10 +724,24 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete }: {
                           className="w-full border border-indigo-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
                       </div>
                     </div>
-                    {payTotal > 0 && (
-                      <p className="text-xs text-indigo-600 font-semibold bg-white rounded-lg px-3 py-2 border border-indigo-200">
-                        {payCount}x de {fmt(payTotal / payCount)} = {fmt(payTotal)}
-                      </p>
+                    {payTotal > 0 && payCount > 0 && (
+                      <div className="bg-white border border-indigo-200 rounded-lg p-2.5 space-y-1">
+                        <p className="text-[10px] font-bold text-indigo-500 uppercase mb-1.5">Preview das parcelas</p>
+                        {Array.from({ length: payCount }, (_, i) => {
+                          const d = new Date(payForm.firstDueDate + "T12:00");
+                          d.setMonth(d.getMonth() + i);
+                          return (
+                            <div key={i} className="flex items-center justify-between text-xs">
+                              <span className="text-gray-500">{i + 1}ª parcela — {d.toLocaleDateString("pt-BR")}</span>
+                              <span className="font-semibold text-indigo-600">{fmt(payTotal / payCount)}</span>
+                            </div>
+                          );
+                        })}
+                        <div className="flex justify-between text-xs font-bold border-t border-indigo-100 pt-1 mt-1">
+                          <span className="text-gray-600">Total</span>
+                          <span className="text-indigo-700">{fmt(payTotal)}</span>
+                        </div>
+                      </div>
                     )}
                   </div>
                 ) : (
@@ -850,6 +846,7 @@ export default function AlunosPage() {
   const [showNovo, setShowNovo] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [selected, setSelected] = useState<Aluno | null>(null);
+  const [autoOpenPay, setAutoOpenPay] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -1056,12 +1053,18 @@ export default function AlunosPage() {
         )}
       </div>
 
-      {showNovo && <NovoAlunoModal onClose={() => setShowNovo(false)} onSave={a => { setAlunos(prev => [...prev, a].sort((a, b) => a.name.localeCompare(b.name))); setShowNovo(false); }} />}
+      {showNovo && <NovoAlunoModal onClose={() => setShowNovo(false)} onSave={a => {
+        setAlunos(prev => [...prev, a].sort((x, y) => x.name.localeCompare(y.name)));
+        setShowNovo(false);
+        setSelected(a);
+        setAutoOpenPay(true);
+      }} />}
       {showImport && <ImportModal onClose={() => setShowImport(false)} onImport={() => { setShowImport(false); load(); }} />}
       {selected && (
-        <AlunoDrawer aluno={selected} onClose={() => setSelected(null)}
+        <AlunoDrawer aluno={selected} autoOpenPayForm={autoOpenPay}
+          onClose={() => { setSelected(null); setAutoOpenPay(false); }}
           onUpdate={a => { setAlunos(prev => prev.map(x => x.id === a.id ? a : x)); setSelected(a); }}
-          onDelete={id => { setAlunos(prev => prev.filter(x => x.id !== id)); setSelected(null); }} />
+          onDelete={id => { setAlunos(prev => prev.filter(x => x.id !== id)); setSelected(null); setAutoOpenPay(false); }} />
       )}
     </div>
   );

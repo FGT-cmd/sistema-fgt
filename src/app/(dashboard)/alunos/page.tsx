@@ -577,7 +577,7 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete }: {
                   <textarea rows={3} value={form.notes} onChange={e => set("notes", e.target.value)}
                     placeholder="Observações... Ex: entrada de R$500, restante em 30D no crédito"
                     className={`${inputCls} resize-none pr-32`} />
-                  <button type="button" onClick={handleAnalyzeObs} disabled={analyzingObs || !form.notes.trim()}
+                  <button type="button" onClick={() => handleAnalyzeObs()} disabled={analyzingObs || !form.notes.trim()}
                     className="absolute right-2 bottom-2 flex items-center gap-1 text-[10px] font-bold px-2.5 py-1.5 rounded-lg text-white disabled:opacity-40 transition-opacity"
                     style={{ background: "#6366f1" }}>
                     {analyzingObs ? "Analisando..." : "✨ Analisar com IA"}

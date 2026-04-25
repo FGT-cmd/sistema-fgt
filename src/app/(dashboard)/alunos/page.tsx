@@ -398,11 +398,11 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm }: {
       setShowPayForm(true);
       setPayForm(f => ({
         ...f,
-        description:       data.description || f.description,
-        totalAmount:       String(data.totalAmount || ""),
-        installments:      String(data.installments || "1"),
-        firstDueDate:      data.firstDueDate || f.firstDueDate,
-        paymentMethod:     data.paymentMethod || f.paymentMethod,
+        planName:      data.description || f.planName,
+        totalAmount:   String(data.totalAmount || ""),
+        installments:  String(data.installments || "1"),
+        firstDueDate:  data.firstDueDate || f.firstDueDate,
+        paymentMethod: data.paymentMethod || f.paymentMethod,
       }));
     }
     setAnalyzingObs(false);

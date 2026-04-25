@@ -375,14 +375,27 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete }: {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
+  const [showPayForm, setShowPayForm] = useState(false);
+  const [payForm, setPayForm] = useState({
+    description: aluno.planName || "Plano",
+    totalAmount: "", installments: "1",
+    firstDueDate: new Date().toISOString().slice(0, 10),
+    paymentMethod: aluno.paymentMethod || "Pix",
+  });
+  const [savingPay, setSavingPay] = useState(false);
+  const [sales, setSales] = useState<Sale[]>(aluno.sales);
   const fileRef = useRef<HTMLInputElement>(null);
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
+  const setPay = (k: string, v: string) => setPayForm(f => ({ ...f, [k]: v }));
 
-  const health = financialHealth(aluno);
-  const pago = totalPago(aluno);
-  const pendente = totalPendente(aluno);
-  const vencidas = aluno.sales.flatMap(s => s.installments).filter(i => i.status !== "pago" && new Date(i.dueDate) < new Date());
+  const allInstallments = sales.flatMap(s => s.installments);
+  const pago = allInstallments.filter(i => i.status === "pago").reduce((s, i) => s + i.amount, 0);
+  const pendente = allInstallments.filter(i => i.status !== "pago").reduce((s, i) => s + i.amount, 0);
+  const vencidas = allInstallments.filter(i => i.status !== "pago" && new Date(i.dueDate) < new Date());
+  const health: "green" | "red" = vencidas.length > 0 ? "red" : "green";
   const contrato = aluno.files?.find(f => f.category === "contrato");
+  const payTotal = parseFloat(payForm.totalAmount.replace(",", ".")) || 0;
+  const payCount = parseInt(payForm.installments) || 1;
 
   async function handleSave() {
     setSaving(true);
@@ -393,6 +406,40 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete }: {
     onUpdate(await res.json());
     setSaving(false);
     setEditando(false);
+  }
+
+  async function handleAddPayment() {
+    if (!payTotal) return;
+    setSavingPay(true);
+    const res = await fetch("/api/financeiro/vendas", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientId:          aluno.id,
+        description:       payForm.description,
+        totalAmount:       payTotal,
+        installmentsCount: payCount,
+        paymentMethod:     payForm.paymentMethod,
+        firstDueDate:      payForm.firstDueDate,
+      }),
+    });
+    const newSale = await res.json();
+    setSales(prev => [newSale, ...prev]);
+    setShowPayForm(false);
+    setPayForm(f => ({ ...f, totalAmount: "", installments: "1" }));
+    setSavingPay(false);
+  }
+
+  async function toggleInstallment(saleId: string, instId: string, currentStatus: string) {
+    const newStatus = currentStatus === "pago" ? "pendente" : "pago";
+    const res = await fetch(`/api/financeiro/vendas/${saleId}/parcelas/${instId}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: newStatus }),
+    });
+    const updated = await res.json();
+    setSales(prev => prev.map(s => s.id === saleId
+      ? { ...s, installments: s.installments.map(i => i.id === instId ? { ...i, ...updated } : i) }
+      : s
+    ));
   }
 
   async function handleContractUpload(file: File) {
@@ -483,8 +530,8 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete }: {
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-                {aluno.phone && <div className="flex items-center gap-1.5 text-gray-700 col-span-1"><Phone className="w-3.5 h-3.5 text-gray-400 shrink-0" />{aluno.phone}</div>}
-                {aluno.email && <div className="flex items-center gap-1.5 text-gray-700 col-span-1 truncate"><Mail className="w-3.5 h-3.5 text-gray-400 shrink-0" /><span className="truncate">{aluno.email}</span></div>}
+                {aluno.phone && <div className="flex items-center gap-1.5 text-gray-700"><Phone className="w-3.5 h-3.5 text-gray-400 shrink-0" />{aluno.phone}</div>}
+                {aluno.email && <div className="flex items-center gap-1.5 text-gray-700 truncate"><Mail className="w-3.5 h-3.5 text-gray-400 shrink-0" /><span className="truncate">{aluno.email}</span></div>}
                 <div className="col-span-2 flex flex-wrap gap-1.5 mt-1">
                   {aluno.planName && <span className="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full font-medium">{aluno.planName}</span>}
                   {aluno.paymentMethod && <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{aluno.paymentMethod}</span>}
@@ -492,7 +539,7 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete }: {
                 </div>
                 {aluno.planDetails && planNeedsDetails(aluno.planName || "") && (
                   <div className="col-span-2 p-2.5 bg-indigo-50 border border-indigo-100 rounded-lg text-xs text-indigo-800">
-                    <span className="font-bold">{aluno.planName === "Parceria/Collab" ? "Parceria:" : "Plano personalizado:"}</span> {aluno.planDetails}
+                    <span className="font-bold">{aluno.planName === "Parceria/Collab" ? "Parceria:" : "Personalizado:"}</span> {aluno.planDetails}
                   </div>
                 )}
                 {aluno.negotiationNotes && (
@@ -513,10 +560,17 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete }: {
               onChange={e => { if (e.target.files?.[0]) handleContractUpload(e.target.files[0]); }} />
             {contrato ? (
               <div className="flex items-center justify-between">
-                <a href={contrato.url} target="_blank" rel="noopener noreferrer"
-                  className="flex items-center gap-2 text-sm text-indigo-600 hover:underline">
-                  <FileText className="w-4 h-4" /> {contrato.name} <ExternalLink className="w-3 h-3" />
-                </a>
+                {contrato.url.startsWith("data:") ? (
+                  <a href={contrato.url} download={contrato.name}
+                    className="flex items-center gap-2 text-sm text-indigo-600 hover:underline">
+                    <FileText className="w-4 h-4" /> {contrato.name} <Download className="w-3 h-3" />
+                  </a>
+                ) : (
+                  <a href={contrato.url} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-2 text-sm text-indigo-600 hover:underline">
+                    <FileText className="w-4 h-4" /> {contrato.name} <ExternalLink className="w-3 h-3" />
+                  </a>
+                )}
                 <button onClick={() => fileRef.current?.click()} className="text-xs text-gray-400 hover:text-gray-600">Substituir</button>
               </div>
             ) : (
@@ -532,7 +586,15 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete }: {
 
           {/* Financeiro */}
           <div className="px-5 py-4">
-            <span className="text-[11px] font-bold text-gray-400 uppercase block mb-3">Financeiro</span>
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-[11px] font-bold text-gray-400 uppercase">Financeiro</span>
+              <button onClick={() => setShowPayForm(v => !v)}
+                className="flex items-center gap-1 text-xs text-indigo-600 hover:underline">
+                <Plus className="w-3 h-3" /> {showPayForm ? "Cancelar" : "Registrar pagamento"}
+              </button>
+            </div>
+
+            {/* Resumo */}
             <div className="grid grid-cols-2 gap-2 mb-4">
               <div className="bg-green-50 rounded-xl p-3 border border-green-100 text-center">
                 <p className="text-[10px] text-green-500 font-bold uppercase">Recebido</p>
@@ -544,9 +606,52 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete }: {
               </div>
             </div>
 
-            {aluno.sales.length === 0
-              ? <p className="text-xs text-gray-400 text-center py-3">Nenhuma venda registrada</p>
-              : aluno.sales.map(sale => {
+            {/* Formulário novo pagamento */}
+            {showPayForm && (
+              <div className="mb-4 p-4 bg-indigo-50 border border-indigo-200 rounded-xl space-y-3">
+                <p className="text-xs font-bold text-indigo-700">Novo lançamento financeiro</p>
+                <input value={payForm.description} onChange={e => setPay("description", e.target.value)}
+                  placeholder="Descrição (ex: Plano Semestral)" className={inputCls} />
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-semibold text-gray-500 mb-1">Valor total (R$)</label>
+                    <input value={payForm.totalAmount} onChange={e => setPay("totalAmount", e.target.value)}
+                      placeholder="0,00" type="number" step="0.01" className={inputCls} />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-gray-500 mb-1">Parcelas</label>
+                    <input value={payForm.installments} onChange={e => setPay("installments", e.target.value)}
+                      type="number" min="1" max="60" className={inputCls} />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-semibold text-gray-500 mb-1">1ª parcela em</label>
+                    <input type="date" value={payForm.firstDueDate} onChange={e => setPay("firstDueDate", e.target.value)} className={inputCls} />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-gray-500 mb-1">Pagamento</label>
+                    <select value={payForm.paymentMethod} onChange={e => setPay("paymentMethod", e.target.value)} className={inputCls}>
+                      {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </div>
+                </div>
+                {payTotal > 0 && (
+                  <p className="text-xs text-indigo-600 font-semibold">
+                    {payCount}x de {fmt(payTotal / payCount)} = {fmt(payTotal)}
+                  </p>
+                )}
+                <button onClick={handleAddPayment} disabled={savingPay || !payTotal}
+                  className="w-full py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-50" style={{ background: "#6366f1" }}>
+                  {savingPay ? "Salvando..." : "Salvar e enviar ao Financeiro"}
+                </button>
+              </div>
+            )}
+
+            {/* Lista de vendas */}
+            {sales.length === 0
+              ? <p className="text-xs text-gray-400 text-center py-3">Nenhum lançamento registrado</p>
+              : sales.map(sale => {
                 const pagas = sale.installments.filter(i => i.status === "pago").length;
                 return (
                   <div key={sale.id} className="mb-3 bg-gray-50 rounded-xl p-3">
@@ -558,15 +663,24 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete }: {
                       <p className="text-sm font-bold text-gray-600">{fmt(sale.totalAmount)}</p>
                     </div>
                     <div className="flex gap-1 flex-wrap">
-                      {sale.installments.sort((a, b) => a.number - b.number).map(inst => (
-                        <span key={inst.id} title={`Parcela ${inst.number} — ${fmtDate(inst.dueDate)}`}
-                          className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full cursor-default ${
-                            inst.status === "pago" ? "bg-green-100 text-green-700"
-                            : new Date(inst.dueDate) < new Date() ? "bg-red-100 text-red-600"
-                            : "bg-gray-200 text-gray-500"
-                          }`}>{inst.number}x {fmt(inst.amount)}</span>
-                      ))}
+                      {sale.installments.sort((a, b) => a.number - b.number).map(inst => {
+                        const isPago = inst.status === "pago";
+                        const isVencida = !isPago && new Date(inst.dueDate) < new Date();
+                        return (
+                          <button key={inst.id}
+                            onClick={() => toggleInstallment(sale.id, inst.id, inst.status)}
+                            title={`Parcela ${inst.number} — ${fmtDate(inst.dueDate)} — clique para ${isPago ? "desmarcar" : "marcar como paga"}`}
+                            className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full transition-all hover:scale-105 ${
+                              isPago ? "bg-green-100 text-green-700 hover:bg-green-200"
+                              : isVencida ? "bg-red-100 text-red-600 hover:bg-red-200"
+                              : "bg-gray-200 text-gray-500 hover:bg-gray-300"
+                            }`}>
+                            {inst.number}x {fmt(inst.amount)}
+                          </button>
+                        );
+                      })}
                     </div>
+                    <p className="text-[10px] text-gray-400 mt-1.5">Clique na parcela para marcar como paga</p>
                   </div>
                 );
               })

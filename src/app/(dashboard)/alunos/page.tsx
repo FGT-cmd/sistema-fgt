@@ -347,13 +347,16 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm }: {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const [showPayForm, setShowPayForm] = useState(autoOpenPayForm ?? false);
+  type CustomInst = { amount: string; dueDate: string; label: string };
   const [payForm, setPayForm] = useState({
     planName: aluno.planName || "",
+    serviceValue: "",
     totalAmount: "", installments: "1",
     firstDueDate: new Date().toISOString().slice(0, 10),
     paymentMethod: aluno.paymentMethod || "Pix",
     negotiationNotes: aluno.negotiationNotes || "",
   });
+  const [customInsts, setCustomInsts] = useState<CustomInst[]>([]);
   const [savingPay, setSavingPay] = useState(false);
   const [analyzingObs, setAnalyzingObs] = useState(false);
   const [aiSuggestion, setAiSuggestion] = useState<{ summary: string; description: string; totalAmount: number; installments: number; firstDueDate: string; paymentMethod: string } | null>(null);
@@ -390,18 +393,22 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm }: {
     setAiSuggestion(null);
     const res = await fetch("/api/alunos/analisar", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ texto, planName: aluno.planName, paymentMethod: aluno.paymentMethod }),
+      body: JSON.stringify({ texto, serviceValue: payForm.serviceValue, planName: payForm.planName || aluno.planName, paymentMethod: payForm.paymentMethod }),
     });
     const data = await res.json();
     if (!data.error) {
       setAiSuggestion(data);
       setShowPayForm(true);
+      if (data.customInstallments?.length) {
+        setCustomInsts(data.customInstallments.map((i: { amount: number; dueDate: string; label?: string }) => ({
+          amount: String(i.amount),
+          dueDate: i.dueDate,
+          label: i.label || "",
+        })));
+      }
       setPayForm(f => ({
         ...f,
-        planName:      data.description || f.planName,
         totalAmount:   String(data.totalAmount || ""),
-        installments:  String(data.installments || "1"),
-        firstDueDate:  data.firstDueDate || f.firstDueDate,
         paymentMethod: data.paymentMethod || f.paymentMethod,
       }));
     }
@@ -409,25 +416,41 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm }: {
   }
 
   async function handleAddPayment() {
-    if (!payTotal) return;
+    const useCustom = customInsts.length > 0;
+    const total = useCustom
+      ? customInsts.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0)
+      : payTotal;
+    if (!total) return;
     setSavingPay(true);
+
+    const body: Record<string, unknown> = {
+      clientId:         aluno.id,
+      description:      payForm.planName || "Plano",
+      totalAmount:      total,
+      paymentMethod:    payForm.paymentMethod,
+      negotiationNotes: payForm.negotiationNotes || null,
+    };
+
+    if (useCustom) {
+      body.customInstallments = customInsts.map(i => ({
+        amount: parseFloat(i.amount) || 0,
+        dueDate: i.dueDate,
+      }));
+    } else {
+      body.installmentsCount = payCount;
+      body.firstDueDate      = payForm.firstDueDate;
+    }
+
     const res = await fetch("/api/financeiro/vendas", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        clientId:          aluno.id,
-        description:       payForm.planName || "Plano",
-        totalAmount:       payTotal,
-        installmentsCount: payCount,
-        firstDueDate:      payForm.firstDueDate,
-        paymentMethod:     payForm.paymentMethod,
-        negotiationNotes:  payForm.negotiationNotes || null,
-      }),
+      body: JSON.stringify(body),
     });
     const newSale = await res.json();
     setSales(prev => [newSale, ...prev]);
     setShowPayForm(false);
     setAiSuggestion(null);
-    setPayForm(f => ({ ...f, totalAmount: "", installments: "1", negotiationNotes: "" }));
+    setCustomInsts([]);
+    setPayForm(f => ({ ...f, totalAmount: "", installments: "1", negotiationNotes: "", serviceValue: "" }));
     setSavingPay(false);
   }
 
@@ -661,7 +684,7 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm }: {
                   )}
                 </div>
 
-                {/* Plano + Pagamento */}
+                {/* Plano + Pagamento + Valor do serviço */}
                 <div className="grid grid-cols-2 gap-2">
                   <select value={payForm.planName} onChange={e => setPay("planName", e.target.value)}
                     className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white">
@@ -673,49 +696,92 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm }: {
                     {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
                   </select>
                 </div>
-
-                {/* Valor + Parcelas + Data */}
-                <div className="grid grid-cols-3 gap-2">
-                  <div>
-                    <label className="block text-[10px] font-semibold text-gray-500 mb-1">Valor total</label>
-                    <input value={payForm.totalAmount} onChange={e => setPay("totalAmount", e.target.value)}
-                      placeholder="0,00" type="number" step="0.01"
-                      className="w-full border border-indigo-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-semibold text-gray-500 mb-1">Parcelas</label>
-                    <input value={payForm.installments} onChange={e => setPay("installments", e.target.value)}
-                      type="number" min="1" max="60"
-                      className="w-full border border-indigo-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-semibold text-gray-500 mb-1">1ª em</label>
-                    <input type="date" value={payForm.firstDueDate} onChange={e => setPay("firstDueDate", e.target.value)}
-                      className="w-full border border-indigo-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
-                  </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-gray-500 mb-1">Valor do serviço (R$) — usado para calcular "restante"</label>
+                  <input value={payForm.serviceValue} onChange={e => setPay("serviceValue", e.target.value)}
+                    placeholder="Ex: 1200,00" type="number" step="0.01"
+                    className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
                 </div>
 
-                {/* Preview */}
-                {payTotal > 0 && (
-                  <div className="bg-white border border-indigo-200 rounded-lg px-3 py-2 space-y-1">
-                    {Array.from({ length: payCount }, (_, i) => {
-                      const d = new Date(payForm.firstDueDate + "T12:00");
-                      d.setMonth(d.getMonth() + i);
-                      return (
-                        <div key={i} className="flex justify-between text-xs">
-                          <span className="text-gray-500">{i + 1}ª — {d.toLocaleDateString("pt-BR")}</span>
-                          <span className="font-semibold text-indigo-600">{fmt(payTotal / payCount)}</span>
-                        </div>
-                      );
-                    })}
-                    <div className="flex justify-between text-xs font-bold border-t border-indigo-100 pt-1">
-                      <span className="text-gray-600">Total</span>
-                      <span className="text-indigo-700">{fmt(payTotal)}</span>
+                {/* Parcelas da IA (editáveis) */}
+                {customInsts.length > 0 ? (
+                  <div className="bg-white border border-indigo-200 rounded-lg p-3 space-y-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="text-[10px] font-bold text-indigo-500 uppercase">Parcelas detectadas pela IA</p>
+                      <button type="button" onClick={() => setCustomInsts([])} className="text-[10px] text-red-400 hover:underline">Limpar</button>
                     </div>
+                    {customInsts.map((inst, i) => (
+                      <div key={i} className="flex items-center gap-2">
+                        <span className="text-[10px] text-indigo-400 font-bold w-16 shrink-0">{inst.label || `${i + 1}ª`}</span>
+                        <input value={inst.amount} type="number" step="0.01" placeholder="R$"
+                          onChange={e => setCustomInsts(prev => prev.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))}
+                          className="flex-1 border border-indigo-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
+                        <input type="date" value={inst.dueDate}
+                          onChange={e => setCustomInsts(prev => prev.map((x, j) => j === i ? { ...x, dueDate: e.target.value } : x))}
+                          className="flex-1 border border-indigo-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
+                        <button type="button" onClick={() => setCustomInsts(prev => prev.filter((_, j) => j !== i))}
+                          className="text-red-300 hover:text-red-500 shrink-0"><X className="w-3.5 h-3.5" /></button>
+                      </div>
+                    ))}
+                    <button type="button"
+                      onClick={() => setCustomInsts(prev => {
+                        const last = prev[prev.length - 1];
+                        const next = last?.dueDate ? (() => { const d = new Date(last.dueDate + "T12:00"); d.setMonth(d.getMonth() + 1); return d.toISOString().slice(0, 10); })() : new Date().toISOString().slice(0, 10);
+                        return [...prev, { amount: "", dueDate: next, label: "" }];
+                      })}
+                      className="text-xs text-indigo-500 hover:underline flex items-center gap-0.5">
+                      <Plus className="w-3 h-3" /> Adicionar parcela
+                    </button>
+                    <div className="flex justify-between text-xs font-bold border-t border-indigo-100 pt-2">
+                      <span className="text-gray-600">Total</span>
+                      <span className="text-indigo-700">{fmt(customInsts.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0))}</span>
+                    </div>
+                  </div>
+                ) : (
+                  /* Divisão manual simples */
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <label className="block text-[10px] font-semibold text-gray-500 mb-1">Valor total</label>
+                        <input value={payForm.totalAmount} onChange={e => setPay("totalAmount", e.target.value)}
+                          placeholder="0,00" type="number" step="0.01"
+                          className="w-full border border-indigo-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-semibold text-gray-500 mb-1">Parcelas</label>
+                        <input value={payForm.installments} onChange={e => setPay("installments", e.target.value)}
+                          type="number" min="1" max="60"
+                          className="w-full border border-indigo-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-semibold text-gray-500 mb-1">1ª em</label>
+                        <input type="date" value={payForm.firstDueDate} onChange={e => setPay("firstDueDate", e.target.value)}
+                          className="w-full border border-indigo-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
+                      </div>
+                    </div>
+                    {payTotal > 0 && (
+                      <div className="bg-white border border-indigo-200 rounded-lg px-3 py-2 space-y-1">
+                        {Array.from({ length: payCount }, (_, i) => {
+                          const d = new Date(payForm.firstDueDate + "T12:00");
+                          d.setMonth(d.getMonth() + i);
+                          return (
+                            <div key={i} className="flex justify-between text-xs">
+                              <span className="text-gray-500">{i + 1}ª — {d.toLocaleDateString("pt-BR")}</span>
+                              <span className="font-semibold text-indigo-600">{fmt(payTotal / payCount)}</span>
+                            </div>
+                          );
+                        })}
+                        <div className="flex justify-between text-xs font-bold border-t border-indigo-100 pt-1">
+                          <span className="text-gray-600">Total</span>
+                          <span className="text-indigo-700">{fmt(payTotal)}</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
-                <button onClick={handleAddPayment} disabled={savingPay || !payTotal}
+                <button onClick={handleAddPayment}
+                  disabled={savingPay || (customInsts.length > 0 ? !customInsts.some(i => parseFloat(i.amount) > 0) : !payTotal)}
                   className="w-full py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-50" style={{ background: "#6366f1" }}>
                   {savingPay ? "Salvando..." : "Salvar e enviar ao Financeiro"}
                 </button>

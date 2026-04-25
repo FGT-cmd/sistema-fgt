@@ -5,32 +5,44 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 export async function POST(req: NextRequest) {
   try {
-    const { texto, planName, paymentMethod } = await req.json();
+    const { texto, serviceValue, planName, paymentMethod } = await req.json();
     if (!texto?.trim()) return NextResponse.json({ error: "Texto vazio" }, { status: 400 });
 
-    const today = new Date().toISOString().slice(0, 10);
+    const today = new Date();
+    const todayStr = today.toISOString().slice(0, 10);
+
+    function addDays(days: number) {
+      const d = new Date(today);
+      d.setDate(d.getDate() + days);
+      return d.toISOString().slice(0, 10);
+    }
 
     const res = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 512,
-      system: `Você é um assistente financeiro de uma consultoria fitness. Hoje é ${today}.
-Analise a negociação descrita e retorne APENAS um JSON válido (sem markdown) com:
+      max_tokens: 800,
+      system: `Você é um assistente financeiro de uma consultoria fitness. Hoje é ${todayStr}.
+Valor total do serviço: R$${serviceValue || "não informado"}.
+Plano: ${planName || "não informado"}. Forma de pagamento preferida: ${paymentMethod || "não informado"}.
+
+Analise a negociação e retorne APENAS um JSON válido (sem markdown):
 {
-  "description": "descrição curta do plano/serviço",
-  "totalAmount": número total em reais,
-  "installments": número de parcelas (mínimo 1),
-  "firstDueDate": "YYYY-MM-DD" da primeira parcela,
+  "customInstallments": [
+    { "amount": número, "dueDate": "YYYY-MM-DD", "label": "Entrada" },
+    { "amount": número, "dueDate": "YYYY-MM-DD", "label": "Reforço" }
+  ],
+  "totalAmount": número total,
   "paymentMethod": "Pix" | "Crédito" | "Débito" | "Transferência" | "Boleto" | "Dinheiro",
-  "summary": "resumo em 1 frase do que foi detectado"
+  "summary": "resumo curto do que foi detectado"
 }
 
-Contexto: plano=${planName || "não informado"}, forma de pagamento preferida=${paymentMethod || "não informado"}.
-Regras:
-- Entenda "entrada" como 1ª parcela agora ou na data mencionada
-- Entenda "restante em X dias" como próxima parcela nessa data
-- Se mencionar "30D", some 30 dias à data de hoje
-- Se houver valor de entrada + restante, calcule o total somando tudo
-- Use o método de pagamento mencionado ou o do contexto`,
+REGRAS CRÍTICAS:
+- Crie UMA entrada em customInstallments para cada pagamento mencionado
+- "hoje" = ${todayStr}
+- "em X dias" ou "XD" = hoje + X dias (ex: "20 dias" = ${addDays(20)}, "45D" = ${addDays(45)})
+- "restante" = valorTotal - soma das outras parcelas. Use o Valor total do serviço se informado
+- Use os valores EXATOS mencionados — NUNCA divida igualmente
+- Se mencionar só 1 forma de pagamento, use ela para todas as parcelas
+- Se o valor total não for informado, some os valores explícitos das parcelas`,
       messages: [{ role: "user", content: texto }],
     });
 

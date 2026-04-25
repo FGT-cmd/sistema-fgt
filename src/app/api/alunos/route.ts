@@ -8,11 +8,9 @@ export async function GET() {
     const clients = await prisma.client.findMany({
       where: { userId: user.id },
       include: {
-        checkIns:    { orderBy: { createdAt: "desc" }, take: 1 },
-        sales:       { include: { installments: { where: { status: "pendente" } } } },
-        anamnese:    true,
-        workoutPlans: { where: { active: true }, take: 1 },
-        bodyRecords: { orderBy: { date: "desc" }, take: 1 },
+        sales: { include: { installments: true } },
+        financialTxs: { where: { type: "receita" }, orderBy: { createdAt: "desc" }, take: 5 },
+        files: { where: { category: "contrato" }, take: 1 },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -30,55 +28,25 @@ export async function POST(req: NextRequest) {
 
     const client = await prisma.client.create({
       data: {
-        name:   body.name,
-        email:  body.email  || null,
-        phone:  body.phone  || null,
-        notes:  body.notes  || null,
-        status: "ativo",
-        userId: user.id,
+        name:             body.name,
+        email:            body.email            || null,
+        phone:            body.phone            || null,
+        notes:            body.notes            || null,
+        status:           body.status           || "ativo",
+        source:           body.source           || null,
+        planName:         body.planName         || null,
+        paymentMethod:    body.paymentMethod    || null,
+        negotiationNotes: body.negotiationNotes || null,
+        userId:           user.id,
       },
-    });
-
-    // Se informações de pagamento foram fornecidas, cria Sale + Installments
-    if (body.payment?.totalAmount && body.payment.totalAmount > 0) {
-      const { totalAmount, installments = 1, description, paymentMethod, firstDueDate } = body.payment;
-      const amountPerInstallment = totalAmount / installments;
-      const startDate = firstDueDate ? new Date(firstDueDate) : new Date();
-
-      const sale = await prisma.sale.create({
-        data: {
-          clientId:         client.id,
-          description:      description || "Plano de consultoria",
-          totalAmount,
-          installmentsCount: installments,
-          paymentMethod:    paymentMethod || null,
-          status:           "ativo",
-        },
-      });
-
-      const installmentData = Array.from({ length: installments }, (_, i) => {
-        const dueDate = new Date(startDate);
-        dueDate.setMonth(dueDate.getMonth() + i);
-        return {
-          saleId:  sale.id,
-          number:  i + 1,
-          amount:  amountPerInstallment,
-          dueDate,
-          status:  "pendente" as const,
-        };
-      });
-
-      await prisma.installment.createMany({ data: installmentData });
-    }
-
-    const clientWithSales = await prisma.client.findUnique({
-      where: { id: client.id },
       include: {
         sales: { include: { installments: true } },
+        financialTxs: true,
+        files: true,
       },
     });
 
-    return NextResponse.json(clientWithSales);
+    return NextResponse.json(client);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: msg }, { status: 500 });

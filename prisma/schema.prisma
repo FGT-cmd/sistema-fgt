@@ -81,6 +81,7 @@ model Client {
   status            String   @default("lead")
   source            String?
   planName          String?
+  planDetails       String?
   paymentMethod     String?
   negotiationNotes  String?
   contractUrl       String?

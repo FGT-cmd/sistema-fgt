@@ -34,6 +34,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         status:           body.status,
         source:           body.source           || null,
         planName:         body.planName         || null,
+        planDetails:      body.planDetails      || null,
         paymentMethod:    body.paymentMethod    || null,
         negotiationNotes: body.negotiationNotes || null,
         contractUrl:      body.contractUrl      || null,

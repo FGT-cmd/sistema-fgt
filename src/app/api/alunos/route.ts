@@ -35,6 +35,7 @@ export async function POST(req: NextRequest) {
         status:           body.status           || "ativo",
         source:           body.source           || null,
         planName:         body.planName         || null,
+        planDetails:      body.planDetails      || null,
         paymentMethod:    body.paymentMethod    || null,
         negotiationNotes: body.negotiationNotes || null,
         userId:           user.id,

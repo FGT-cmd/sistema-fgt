@@ -21,6 +21,7 @@ type Aluno = {
   status: string;
   source?: string | null;
   planName?: string | null;
+  planDetails?: string | null;
   paymentMethod?: string | null;
   negotiationNotes?: string | null;
   contractUrl?: string | null;
@@ -39,8 +40,20 @@ const STATUS_OPTIONS = [
   { value: "pausado", label: "Pausado", color: "bg-amber-100 text-amber-600" },
 ];
 
+const PLAN_OPTIONS = [
+  { value: "Trimestral",       label: "Trimestral",       details: false },
+  { value: "Semestral",        label: "Semestral",        details: false },
+  { value: "Anual",            label: "Anual",            details: false },
+  { value: "Personalizado",    label: "Personalizado",    details: true  },
+  { value: "Parceria/Collab",  label: "Parceria / Collab", details: true },
+];
+
 const FUNIL_OPTIONS = ["Instagram", "Indicação", "WhatsApp", "TikTok", "Google", "Site", "Evento", "Outro"];
 const PAYMENT_METHODS = ["Pix", "Débito", "Crédito", "Transferência", "Boleto", "Dinheiro"];
+
+function planNeedsDetails(planName: string) {
+  return PLAN_OPTIONS.find(p => p.value === planName)?.details ?? false;
+}
 
 function statusCfg(s: string) {
   return STATUS_OPTIONS.find(o => o.value === s) || STATUS_OPTIONS[0];
@@ -87,7 +100,7 @@ function NovoAlunoModal({ plans, onClose, onSave }: {
 }) {
   const [form, setForm] = useState({
     name: "", email: "", phone: "", status: "ativo", source: "",
-    planName: "", paymentMethod: "Pix", negotiationNotes: "", notes: "",
+    planName: "", planDetails: "", paymentMethod: "Pix", negotiationNotes: "", notes: "",
   });
   const [saving, setSaving] = useState(false);
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
@@ -135,8 +148,7 @@ function NovoAlunoModal({ plans, onClose, onSave }: {
               <Field label="Plano">
                 <select value={form.planName} onChange={e => set("planName", e.target.value)} className={inputCls}>
                   <option value="">Selecionar...</option>
-                  {plans.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
-                  <option value="Personalizado">Personalizado</option>
+                  {PLAN_OPTIONS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
                 </select>
               </Field>
               <Field label="Forma de Pagamento">
@@ -145,6 +157,18 @@ function NovoAlunoModal({ plans, onClose, onSave }: {
                 </select>
               </Field>
             </div>
+            {planNeedsDetails(form.planName) && (
+              <div className="mt-3 p-3 bg-indigo-50 border border-indigo-100 rounded-xl">
+                <p className="text-xs font-semibold text-indigo-600 mb-1.5">
+                  {form.planName === "Parceria/Collab" ? "Descreva a parceria / collab" : "Descreva o plano personalizado"}
+                </p>
+                <textarea rows={3} value={form.planDetails} onChange={e => set("planDetails", e.target.value)}
+                  placeholder={form.planName === "Parceria/Collab"
+                    ? "Ex: 3 meses grátis em troca de divulgação, parceria com marca X..."
+                    : "Ex: 2x por semana online + 1x presencial, valor negociado..."}
+                  className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white resize-none" />
+              </div>
+            )}
           </div>
 
           <Field label="De qual funil veio?">
@@ -184,8 +208,8 @@ function AlunoDrawer({ aluno, plans, onClose, onUpdate, onDelete }: {
   const [form, setForm] = useState({
     name: aluno.name, email: aluno.email || "", phone: aluno.phone || "",
     status: aluno.status, source: aluno.source || "", planName: aluno.planName || "",
-    paymentMethod: aluno.paymentMethod || "Pix", negotiationNotes: aluno.negotiationNotes || "",
-    notes: aluno.notes || "",
+    planDetails: aluno.planDetails || "", paymentMethod: aluno.paymentMethod || "Pix",
+    negotiationNotes: aluno.negotiationNotes || "", notes: aluno.notes || "",
   });
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -276,13 +300,24 @@ function AlunoDrawer({ aluno, plans, onClose, onUpdate, onDelete }: {
                 <div className="grid grid-cols-2 gap-2">
                   <select value={form.planName} onChange={e => set("planName", e.target.value)} className={inputCls}>
                     <option value="">Plano...</option>
-                    {plans.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
-                    <option value="Personalizado">Personalizado</option>
+                    {PLAN_OPTIONS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
                   </select>
                   <select value={form.paymentMethod} onChange={e => set("paymentMethod", e.target.value)} className={inputCls}>
                     {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
                   </select>
                 </div>
+                {planNeedsDetails(form.planName) && (
+                  <div className="p-3 bg-indigo-50 border border-indigo-100 rounded-xl">
+                    <p className="text-xs font-semibold text-indigo-600 mb-1.5">
+                      {form.planName === "Parceria/Collab" ? "Descreva a parceria / collab" : "Descreva o plano personalizado"}
+                    </p>
+                    <textarea rows={3} value={form.planDetails} onChange={e => set("planDetails", e.target.value)}
+                      placeholder={form.planName === "Parceria/Collab"
+                        ? "Ex: 3 meses grátis em troca de divulgação..."
+                        : "Ex: 2x por semana online + 1x presencial..."}
+                      className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white resize-none" />
+                  </div>
+                )}
                 <select value={form.source} onChange={e => set("source", e.target.value)} className={inputCls}>
                   <option value="">Funil...</option>
                   {FUNIL_OPTIONS.map(f => <option key={f} value={f}>{f}</option>)}
@@ -305,8 +340,13 @@ function AlunoDrawer({ aluno, plans, onClose, onUpdate, onDelete }: {
                   {aluno.paymentMethod && <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{aluno.paymentMethod}</span>}
                   {aluno.source && <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">📍 {aluno.source}</span>}
                 </div>
+                {aluno.planDetails && planNeedsDetails(aluno.planName || "") && (
+                  <div className="p-2.5 bg-indigo-50 border border-indigo-100 rounded-lg text-xs text-indigo-800">
+                    <span className="font-bold">{aluno.planName === "Parceria/Collab" ? "Parceria:" : "Plano personalizado:"}</span> {aluno.planDetails}
+                  </div>
+                )}
                 {aluno.negotiationNotes && (
-                  <div className="mt-2 p-2.5 bg-amber-50 border border-amber-100 rounded-lg text-xs text-amber-800">
+                  <div className="p-2.5 bg-amber-50 border border-amber-100 rounded-lg text-xs text-amber-800">
                     <span className="font-bold">Negociação:</span> {aluno.negotiationNotes}
                   </div>
                 )}

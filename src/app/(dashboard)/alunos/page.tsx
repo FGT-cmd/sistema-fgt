@@ -381,8 +381,11 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete }: {
     totalAmount: "", installments: "1",
     firstDueDate: new Date().toISOString().slice(0, 10),
     paymentMethod: aluno.paymentMethod || "Pix",
+    negotiationNotes: aluno.negotiationNotes || "",
   });
   const [savingPay, setSavingPay] = useState(false);
+  const [analyzingObs, setAnalyzingObs] = useState(false);
+  const [aiSuggestion, setAiSuggestion] = useState<{ summary: string; description: string; totalAmount: number; installments: number; firstDueDate: string; paymentMethod: string } | null>(null);
   const [sales, setSales] = useState<Sale[]>(aluno.sales);
   const fileRef = useRef<HTMLInputElement>(null);
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
@@ -408,6 +411,31 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete }: {
     setEditando(false);
   }
 
+  async function handleAnalyzeObs(source?: "payForm") {
+    const texto = source === "payForm" ? payForm.negotiationNotes : (form.negotiationNotes || form.notes);
+    if (!texto?.trim()) return;
+    setAnalyzingObs(true);
+    setAiSuggestion(null);
+    const res = await fetch("/api/alunos/analisar", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ texto, planName: aluno.planName, paymentMethod: aluno.paymentMethod }),
+    });
+    const data = await res.json();
+    if (!data.error) {
+      setAiSuggestion(data);
+      setShowPayForm(true);
+      setPayForm(f => ({
+        ...f,
+        description:       data.description || f.description,
+        totalAmount:       String(data.totalAmount || ""),
+        installments:      String(data.installments || "1"),
+        firstDueDate:      data.firstDueDate || f.firstDueDate,
+        paymentMethod:     data.paymentMethod || f.paymentMethod,
+      }));
+    }
+    setAnalyzingObs(false);
+  }
+
   async function handleAddPayment() {
     if (!payTotal) return;
     setSavingPay(true);
@@ -425,7 +453,8 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete }: {
     const newSale = await res.json();
     setSales(prev => [newSale, ...prev]);
     setShowPayForm(false);
-    setPayForm(f => ({ ...f, totalAmount: "", installments: "1" }));
+    setAiSuggestion(null);
+    setPayForm(f => ({ ...f, totalAmount: "", installments: "1", negotiationNotes: "" }));
     setSavingPay(false);
   }
 
@@ -521,8 +550,22 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete }: {
                 </select>
                 <textarea rows={2} value={form.negotiationNotes} onChange={e => set("negotiationNotes", e.target.value)}
                   placeholder="Negociação..." className={`${inputCls} resize-none col-span-2`} />
-                <textarea rows={2} value={form.notes} onChange={e => set("notes", e.target.value)}
-                  placeholder="Observações..." className={`${inputCls} resize-none col-span-2`} />
+                <div className="col-span-2 relative">
+                  <textarea rows={3} value={form.notes} onChange={e => set("notes", e.target.value)}
+                    placeholder="Observações... Ex: entrada de R$500, restante em 30D no crédito"
+                    className={`${inputCls} resize-none pr-32`} />
+                  <button type="button" onClick={handleAnalyzeObs} disabled={analyzingObs || !form.notes.trim()}
+                    className="absolute right-2 bottom-2 flex items-center gap-1 text-[10px] font-bold px-2.5 py-1.5 rounded-lg text-white disabled:opacity-40 transition-opacity"
+                    style={{ background: "#6366f1" }}>
+                    {analyzingObs ? "Analisando..." : "✨ Analisar com IA"}
+                  </button>
+                </div>
+                {aiSuggestion && (
+                  <div className="col-span-2 p-3 bg-indigo-50 border border-indigo-200 rounded-xl text-xs text-indigo-800">
+                    <p className="font-bold mb-0.5">IA detectou:</p>
+                    <p>{aiSuggestion.summary}</p>
+                  </div>
+                )}
                 <button onClick={handleSave} disabled={saving}
                   className="col-span-2 py-2 rounded-xl text-sm font-semibold text-white flex items-center justify-center gap-1 disabled:opacity-50" style={{ background: "#6366f1" }}>
                   <Save className="w-3.5 h-3.5" /> {saving ? "Salvando..." : "Salvar"}
@@ -609,35 +652,64 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete }: {
             {/* Formulário novo pagamento */}
             {showPayForm && (
               <div className="mb-4 p-4 bg-indigo-50 border border-indigo-200 rounded-xl space-y-3">
-                <p className="text-xs font-bold text-indigo-700">Novo lançamento financeiro</p>
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-bold text-indigo-700">Novo lançamento financeiro</p>
+                  {aiSuggestion && (
+                    <span className="text-[10px] bg-indigo-200 text-indigo-700 px-2 py-0.5 rounded-full font-bold">✨ Preenchido pela IA</span>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-gray-500 mb-1">Negociação</label>
+                  <textarea rows={2} value={payForm.negotiationNotes} onChange={e => setPay("negotiationNotes", e.target.value)}
+                    placeholder="Ex: entrada de R$500, restante em 2x no crédito..."
+                    className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white resize-none" />
+                  {!aiSuggestion && (
+                    <button type="button" onClick={handleAnalyzeObs} disabled={analyzingObs || !payForm.negotiationNotes.trim()}
+                      className="mt-1.5 flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded-lg text-white disabled:opacity-40"
+                      style={{ background: "#6366f1" }}
+                      onClick={() => handleAnalyzeObs("payForm")}>
+                      {analyzingObs ? "Analisando..." : "✨ Analisar e preencher com IA"}
+                    </button>
+                  )}
+                </div>
+                {aiSuggestion && (
+                  <div className="p-2.5 bg-white border border-indigo-200 rounded-lg text-xs text-indigo-800">
+                    <p className="font-bold mb-0.5">IA detectou:</p>
+                    <p>{aiSuggestion.summary}</p>
+                  </div>
+                )}
                 <input value={payForm.description} onChange={e => setPay("description", e.target.value)}
-                  placeholder="Descrição (ex: Plano Semestral)" className={inputCls} />
+                  placeholder="Descrição (ex: Plano Semestral)" className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="block text-[10px] font-semibold text-gray-500 mb-1">Valor total (R$)</label>
                     <input value={payForm.totalAmount} onChange={e => setPay("totalAmount", e.target.value)}
-                      placeholder="0,00" type="number" step="0.01" className={inputCls} />
+                      placeholder="0,00" type="number" step="0.01"
+                      className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
                   </div>
                   <div>
                     <label className="block text-[10px] font-semibold text-gray-500 mb-1">Parcelas</label>
                     <input value={payForm.installments} onChange={e => setPay("installments", e.target.value)}
-                      type="number" min="1" max="60" className={inputCls} />
+                      type="number" min="1" max="60"
+                      className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="block text-[10px] font-semibold text-gray-500 mb-1">1ª parcela em</label>
-                    <input type="date" value={payForm.firstDueDate} onChange={e => setPay("firstDueDate", e.target.value)} className={inputCls} />
+                    <input type="date" value={payForm.firstDueDate} onChange={e => setPay("firstDueDate", e.target.value)}
+                      className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
                   </div>
                   <div>
                     <label className="block text-[10px] font-semibold text-gray-500 mb-1">Pagamento</label>
-                    <select value={payForm.paymentMethod} onChange={e => setPay("paymentMethod", e.target.value)} className={inputCls}>
+                    <select value={payForm.paymentMethod} onChange={e => setPay("paymentMethod", e.target.value)}
+                      className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white">
                       {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
                     </select>
                   </div>
                 </div>
                 {payTotal > 0 && (
-                  <p className="text-xs text-indigo-600 font-semibold">
+                  <p className="text-xs text-indigo-600 font-semibold bg-white rounded-lg px-3 py-2 border border-indigo-200">
                     {payCount}x de {fmt(payTotal / payCount)} = {fmt(payTotal)}
                   </p>
                 )}

@@ -376,6 +376,7 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete }: {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const [showPayForm, setShowPayForm] = useState(false);
+  const [payMode, setPayMode] = useState<"igual" | "personalizado">("igual");
   const [payForm, setPayForm] = useState({
     description: aluno.planName || "Plano",
     totalAmount: "", installments: "1",
@@ -383,6 +384,10 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete }: {
     paymentMethod: aluno.paymentMethod || "Pix",
     negotiationNotes: aluno.negotiationNotes || "",
   });
+  type CustomInst = { amount: string; dueDate: string };
+  const [customInsts, setCustomInsts] = useState<CustomInst[]>([
+    { amount: "", dueDate: new Date().toISOString().slice(0, 10) },
+  ]);
   const [savingPay, setSavingPay] = useState(false);
   const [analyzingObs, setAnalyzingObs] = useState(false);
   const [aiSuggestion, setAiSuggestion] = useState<{ summary: string; description: string; totalAmount: number; installments: number; firstDueDate: string; paymentMethod: string } | null>(null);
@@ -391,14 +396,16 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete }: {
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
   const setPay = (k: string, v: string) => setPayForm(f => ({ ...f, [k]: v }));
 
+  // Totais sempre calculados do sales state — reativos
   const allInstallments = sales.flatMap(s => s.installments);
-  const pago = allInstallments.filter(i => i.status === "pago").reduce((s, i) => s + i.amount, 0);
+  const pago    = allInstallments.filter(i => i.status === "pago").reduce((s, i) => s + i.amount, 0);
   const pendente = allInstallments.filter(i => i.status !== "pago").reduce((s, i) => s + i.amount, 0);
   const vencidas = allInstallments.filter(i => i.status !== "pago" && new Date(i.dueDate) < new Date());
   const health: "green" | "red" = vencidas.length > 0 ? "red" : "green";
   const contrato = aluno.files?.find(f => f.category === "contrato");
   const payTotal = parseFloat(payForm.totalAmount.replace(",", ".")) || 0;
-  const payCount = parseInt(payForm.installments) || 1;
+  const payCount = Math.max(1, parseInt(payForm.installments) || 1);
+  const customTotal = customInsts.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
 
   async function handleSave() {
     setSaving(true);
@@ -437,24 +444,40 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete }: {
   }
 
   async function handleAddPayment() {
-    if (!payTotal) return;
+    const total = payMode === "personalizado" ? customTotal : payTotal;
+    if (!total) return;
     setSavingPay(true);
+
+    const body: Record<string, unknown> = {
+      clientId:     aluno.id,
+      description:  payForm.description,
+      totalAmount:  total,
+      paymentMethod: payForm.paymentMethod,
+      negotiationNotes: payForm.negotiationNotes || null,
+    };
+
+    if (payMode === "personalizado") {
+      body.customInstallments = customInsts.map(i => ({
+        amount:  parseFloat(i.amount) || 0,
+        dueDate: i.dueDate,
+      }));
+    } else {
+      body.installmentsCount = payCount;
+      body.firstDueDate      = payForm.firstDueDate;
+    }
+
     const res = await fetch("/api/financeiro/vendas", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        clientId:          aluno.id,
-        description:       payForm.description,
-        totalAmount:       payTotal,
-        installmentsCount: payCount,
-        paymentMethod:     payForm.paymentMethod,
-        firstDueDate:      payForm.firstDueDate,
-      }),
+      body: JSON.stringify(body),
     });
     const newSale = await res.json();
+    // Atualiza state local → Recebido/Pendente reagem imediatamente
     setSales(prev => [newSale, ...prev]);
     setShowPayForm(false);
     setAiSuggestion(null);
     setPayForm(f => ({ ...f, totalAmount: "", installments: "1", negotiationNotes: "" }));
+    setCustomInsts([{ amount: "", dueDate: new Date().toISOString().slice(0, 10) }]);
+    setPayMode("igual");
     setSavingPay(false);
   }
 
@@ -654,66 +677,110 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete }: {
               <div className="mb-4 p-4 bg-indigo-50 border border-indigo-200 rounded-xl space-y-3">
                 <div className="flex items-center justify-between">
                   <p className="text-xs font-bold text-indigo-700">Novo lançamento financeiro</p>
-                  {aiSuggestion && (
-                    <span className="text-[10px] bg-indigo-200 text-indigo-700 px-2 py-0.5 rounded-full font-bold">✨ Preenchido pela IA</span>
-                  )}
+                  {aiSuggestion && <span className="text-[10px] bg-indigo-200 text-indigo-700 px-2 py-0.5 rounded-full font-bold">✨ IA</span>}
                 </div>
+
+                {/* Negociação + IA */}
                 <div>
                   <label className="block text-[10px] font-semibold text-gray-500 mb-1">Negociação</label>
                   <textarea rows={2} value={payForm.negotiationNotes} onChange={e => setPay("negotiationNotes", e.target.value)}
-                    placeholder="Ex: entrada de R$500, restante em 2x no crédito..."
+                    placeholder="Ex: entrada de R$200, restante 4x no crédito..."
                     className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white resize-none" />
-                  {!aiSuggestion && (
-                    <button type="button" onClick={handleAnalyzeObs} disabled={analyzingObs || !payForm.negotiationNotes.trim()}
-                      className="mt-1.5 flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded-lg text-white disabled:opacity-40"
-                      style={{ background: "#6366f1" }}
-                      onClick={() => handleAnalyzeObs("payForm")}>
-                      {analyzingObs ? "Analisando..." : "✨ Analisar e preencher com IA"}
+                  {!aiSuggestion && payForm.negotiationNotes.trim() && (
+                    <button type="button" onClick={() => handleAnalyzeObs("payForm")} disabled={analyzingObs}
+                      className="mt-1.5 text-[10px] font-bold px-2.5 py-1 rounded-lg text-white disabled:opacity-40"
+                      style={{ background: "#6366f1" }}>
+                      {analyzingObs ? "Analisando..." : "✨ Analisar com IA"}
                     </button>
                   )}
+                  {aiSuggestion && (
+                    <p className="mt-1 text-xs text-indigo-700 bg-white border border-indigo-200 rounded-lg px-2.5 py-1.5">
+                      <span className="font-bold">IA:</span> {aiSuggestion.summary}
+                    </p>
+                  )}
                 </div>
-                {aiSuggestion && (
-                  <div className="p-2.5 bg-white border border-indigo-200 rounded-lg text-xs text-indigo-800">
-                    <p className="font-bold mb-0.5">IA detectou:</p>
-                    <p>{aiSuggestion.summary}</p>
+
+                {/* Descrição + Pagamento */}
+                <div className="grid grid-cols-2 gap-2">
+                  <input value={payForm.description} onChange={e => setPay("description", e.target.value)}
+                    placeholder="Descrição" className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
+                  <select value={payForm.paymentMethod} onChange={e => setPay("paymentMethod", e.target.value)}
+                    className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white">
+                    {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+
+                {/* Modo das parcelas */}
+                <div className="flex gap-1">
+                  {(["igual", "personalizado"] as const).map(m => (
+                    <button key={m} type="button" onClick={() => setPayMode(m)}
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${payMode === m ? "text-white" : "bg-white text-gray-500 border border-indigo-200"}`}
+                      style={payMode === m ? { background: "#6366f1" } : {}}>
+                      {m === "igual" ? "Divisão igual" : "Personalizado"}
+                    </button>
+                  ))}
+                </div>
+
+                {payMode === "igual" ? (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <label className="block text-[10px] font-semibold text-gray-500 mb-1">Valor total</label>
+                        <input value={payForm.totalAmount} onChange={e => setPay("totalAmount", e.target.value)}
+                          placeholder="0,00" type="number" step="0.01"
+                          className="w-full border border-indigo-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-semibold text-gray-500 mb-1">Parcelas</label>
+                        <input value={payForm.installments} onChange={e => setPay("installments", e.target.value)}
+                          type="number" min="1" max="60"
+                          className="w-full border border-indigo-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-semibold text-gray-500 mb-1">1ª em</label>
+                        <input type="date" value={payForm.firstDueDate} onChange={e => setPay("firstDueDate", e.target.value)}
+                          className="w-full border border-indigo-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
+                      </div>
+                    </div>
+                    {payTotal > 0 && (
+                      <p className="text-xs text-indigo-600 font-semibold bg-white rounded-lg px-3 py-2 border border-indigo-200">
+                        {payCount}x de {fmt(payTotal / payCount)} = {fmt(payTotal)}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {customInsts.map((inst, i) => (
+                      <div key={i} className="flex items-center gap-2">
+                        <span className="text-[10px] font-bold text-indigo-500 w-5 shrink-0">{i + 1}x</span>
+                        <input value={inst.amount} type="number" step="0.01" placeholder="R$"
+                          onChange={e => setCustomInsts(prev => prev.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))}
+                          className="flex-1 border border-indigo-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
+                        <input type="date" value={inst.dueDate}
+                          onChange={e => setCustomInsts(prev => prev.map((x, j) => j === i ? { ...x, dueDate: e.target.value } : x))}
+                          className="flex-1 border border-indigo-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
+                        {customInsts.length > 1 && (
+                          <button type="button" onClick={() => setCustomInsts(prev => prev.filter((_, j) => j !== i))}
+                            className="text-red-400 hover:text-red-600 shrink-0"><X className="w-4 h-4" /></button>
+                        )}
+                      </div>
+                    ))}
+                    <div className="flex items-center justify-between">
+                      <button type="button"
+                        onClick={() => setCustomInsts(prev => {
+                          const last = prev[prev.length - 1];
+                          const next = last?.dueDate ? (() => { const d = new Date(last.dueDate + "T12:00"); d.setMonth(d.getMonth() + 1); return d.toISOString().slice(0, 10); })() : new Date().toISOString().slice(0, 10);
+                          return [...prev, { amount: "", dueDate: next }];
+                        })}
+                        className="text-xs text-indigo-600 hover:underline flex items-center gap-0.5">
+                        <Plus className="w-3 h-3" /> Adicionar parcela
+                      </button>
+                      {customTotal > 0 && <p className="text-xs font-bold text-indigo-700">Total: {fmt(customTotal)}</p>}
+                    </div>
                   </div>
                 )}
-                <input value={payForm.description} onChange={e => setPay("description", e.target.value)}
-                  placeholder="Descrição (ex: Plano Semestral)" className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-[10px] font-semibold text-gray-500 mb-1">Valor total (R$)</label>
-                    <input value={payForm.totalAmount} onChange={e => setPay("totalAmount", e.target.value)}
-                      placeholder="0,00" type="number" step="0.01"
-                      className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-semibold text-gray-500 mb-1">Parcelas</label>
-                    <input value={payForm.installments} onChange={e => setPay("installments", e.target.value)}
-                      type="number" min="1" max="60"
-                      className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-[10px] font-semibold text-gray-500 mb-1">1ª parcela em</label>
-                    <input type="date" value={payForm.firstDueDate} onChange={e => setPay("firstDueDate", e.target.value)}
-                      className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-semibold text-gray-500 mb-1">Pagamento</label>
-                    <select value={payForm.paymentMethod} onChange={e => setPay("paymentMethod", e.target.value)}
-                      className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white">
-                      {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
-                    </select>
-                  </div>
-                </div>
-                {payTotal > 0 && (
-                  <p className="text-xs text-indigo-600 font-semibold bg-white rounded-lg px-3 py-2 border border-indigo-200">
-                    {payCount}x de {fmt(payTotal / payCount)} = {fmt(payTotal)}
-                  </p>
-                )}
-                <button onClick={handleAddPayment} disabled={savingPay || !payTotal}
+
+                <button onClick={handleAddPayment} disabled={savingPay || (payMode === "igual" ? !payTotal : !customTotal)}
                   className="w-full py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-50" style={{ background: "#6366f1" }}>
                   {savingPay ? "Salvando..." : "Salvar e enviar ao Financeiro"}
                 </button>

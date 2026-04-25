@@ -8,16 +8,15 @@ export async function GET() {
     const clients = await prisma.client.findMany({
       where: { userId: user.id },
       include: {
-        sales: { include: { installments: true } },
-        financialTxs: { where: { type: "receita" }, orderBy: { createdAt: "desc" }, take: 5 },
-        files: { where: { category: "contrato" }, take: 1 },
+        sales: { include: { installments: true }, orderBy: { createdAt: "desc" } },
+        financialTxs: { where: { type: "receita" }, orderBy: { createdAt: "desc" } },
+        files: { orderBy: { createdAt: "desc" } },
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: { name: "asc" },
     });
     return NextResponse.json(clients);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json({ error: String(err) }, { status: 500 });
   }
 }
 
@@ -40,6 +39,37 @@ export async function POST(req: NextRequest) {
         negotiationNotes: body.negotiationNotes || null,
         userId:           user.id,
       },
+    });
+
+    // Cria venda + parcelas se valor informado
+    if (body.totalAmount && parseFloat(body.totalAmount) > 0) {
+      const total        = parseFloat(body.totalAmount);
+      const installments = parseInt(body.installments) || 1;
+      const firstDue     = body.firstDueDate ? new Date(body.firstDueDate) : new Date();
+      const perParcela   = total / installments;
+
+      const sale = await prisma.sale.create({
+        data: {
+          clientId:          client.id,
+          description:       body.planName || "Plano",
+          totalAmount:       total,
+          installmentsCount: installments,
+          paymentMethod:     body.paymentMethod || null,
+          status:            "ativo",
+        },
+      });
+
+      const installmentData = Array.from({ length: installments }, (_, i) => {
+        const d = new Date(firstDue);
+        d.setMonth(d.getMonth() + i);
+        return { saleId: sale.id, number: i + 1, amount: perParcela, dueDate: d, status: "pendente" as const };
+      });
+
+      await prisma.installment.createMany({ data: installmentData });
+    }
+
+    const result = await prisma.client.findUnique({
+      where: { id: client.id },
       include: {
         sales: { include: { installments: true } },
         financialTxs: true,
@@ -47,9 +77,38 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    return NextResponse.json(client);
+    return NextResponse.json(result);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json({ error: String(err) }, { status: 500 });
+  }
+}
+
+export async function PUT(req: NextRequest) {
+  // Importação em massa
+  try {
+    const user = await getDefaultUser();
+    const { alunos } = await req.json();
+    const created = [];
+
+    for (const a of alunos) {
+      const client = await prisma.client.create({
+        data: {
+          name:          a.name,
+          email:         a.email   || null,
+          phone:         a.phone   || null,
+          notes:         a.notes   || null,
+          status:        a.status  || "ativo",
+          source:        a.source  || null,
+          planName:      a.planName || null,
+          paymentMethod: a.paymentMethod || null,
+          userId:        user.id,
+        },
+      });
+      created.push(client);
+    }
+
+    return NextResponse.json({ ok: true, count: created.length });
+  } catch (err) {
+    return NextResponse.json({ error: String(err) }, { status: 500 });
   }
 }

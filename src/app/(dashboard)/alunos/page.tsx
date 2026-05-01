@@ -75,6 +75,14 @@ function totalPendente(a: Aluno) { return a.sales.flatMap(s => s.installments).f
 
 const inputCls = "w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white";
 
+function formatPhone(raw: string): string {
+  const d = raw.replace(/\D/g, "").slice(0, 11);
+  if (d.length <= 2) return d;
+  if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
+  if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+}
+
 // ─── AlunoPaymentForm ──────────────────────────────────────────────
 function AlunoPaymentForm({
   aluno, plans, onSaved, onCancel,
@@ -95,6 +103,9 @@ function AlunoPaymentForm({
   const [negType, setNegType] = useState<NegotiationType>("pix");
   const [payMethod, setPayMethod] = useState(aluno.paymentMethod || "Pix");
   const [negotiationNotes, setNegotiationNotes] = useState(aluno.negotiationNotes || "");
+
+  // Número de parcelas controlável (independente do plano)
+  const [installmentCount, setInstallmentCount] = useState(1);
 
   // Installments livres (cash/pix/custom)
   const [installments, setInstallments] = useState<InstallmentDraft[]>([
@@ -136,22 +147,52 @@ function AlunoPaymentForm({
     }
   }
 
-  // Auto-preenche ao selecionar plano
+  // Distribui o total em N parcelas iguais
+  function distributeInstallments(total: number, count: number) {
+    const per = parseFloat((total / count).toFixed(2));
+    const makeLabel = (i: number) => count === 1 ? "Pagamento" : i === 0 ? "1ª parcela" : `${i + 1}ª parcela`;
+    return Array.from({ length: count }, (_, i) => ({
+      amount: String(per), dueDate: today, label: makeLabel(i),
+    }));
+  }
+
+  // Auto-preenche ao selecionar plano — NÃO bloqueia quantidade de parcelas
   function applyPlan(p: ServicePlan) {
     setSelectedPlanId(p.id);
     setCustomPlanName("");
     setGrossValue(String(p.totalAmount));
     setNetValue(String(p.totalAmount));
-    const per = parseFloat((p.totalAmount / p.installments).toFixed(2));
-    const makeLabel = (i: number) => p.installments === 1 ? "Pagamento" : i === 0 ? "1ª parcela" : `${i + 1}ª parcela`;
+    // Usa installmentCount atual, não o padrão do plano
+    const count = installmentCount || p.installments;
+    setInstallmentCount(count);
     if (negType === "pix" || negType === "cash" || negType === "custom") {
-      setInstallments(Array.from({ length: p.installments }, (_, i) => ({
-        amount: String(per), dueDate: today, label: makeLabel(i),
-      })));
+      setInstallments(distributeInstallments(p.totalAmount, count));
     } else if (negType === "card") {
-      setCardInstallments(Array.from({ length: p.installments }, (_, i) => ({
-        amount: String(per), dueDate: today, label: `Parcela ${i + 1}`,
-      })));
+      setCardInstallments(distributeInstallments(p.totalAmount, count));
+    }
+  }
+
+  // Redistribui quando o usuário muda o número de parcelas
+  function changeInstallmentCount(newCount: number) {
+    const n = Math.max(1, Math.min(60, newCount));
+    setInstallmentCount(n);
+    const total = parseFloat(grossValue.replace(",", ".")) || 0;
+    if (total > 0) {
+      if (negType !== "card") {
+        setInstallments(distributeInstallments(total, n));
+      } else {
+        setCardInstallments(distributeInstallments(total, n));
+      }
+    } else {
+      // Sem total definido: apenas ajusta o número de linhas
+      const makeLabel = (i: number) => n === 1 ? "Pagamento" : `${i + 1}ª parcela`;
+      if (negType !== "card") {
+        setInstallments(Array.from({ length: n }, (_, i) => ({
+          amount: installments[i]?.amount || "",
+          dueDate: installments[i]?.dueDate || today,
+          label: installments[i]?.label || makeLabel(i),
+        })));
+      }
     }
   }
 
@@ -370,6 +411,32 @@ function AlunoPaymentForm({
         {/* PIX PARCELADO ou PERSONALIZADO */}
         {(negType === "pix" || negType === "custom") && (
           <div className="space-y-2">
+            {/* Valor total (referência para redistribuição) */}
+            <div className="grid grid-cols-2 gap-2 mb-1">
+              <div>
+                <label className="block text-[10px] font-semibold text-gray-500 mb-1">Valor total da negociação</label>
+                <input type="number" step="0.01" value={grossValue}
+                  onChange={e => setGrossValue(e.target.value)}
+                  placeholder="R$" className={inputClsLocal}/>
+              </div>
+            </div>
+            {/* Controle de quantidade de parcelas */}
+            <div className="flex items-center gap-3 p-2 bg-gray-50 rounded-xl border border-gray-200">
+              <span className="text-xs text-gray-500 font-medium shrink-0">Nº de parcelas:</span>
+              <div className="flex items-center gap-1">
+                <button onClick={() => changeInstallmentCount(installmentCount - 1)}
+                  className="w-6 h-6 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-200 flex items-center justify-center text-sm font-bold">−</button>
+                <input type="number" min="1" max="60" value={installmentCount}
+                  onChange={e => changeInstallmentCount(parseInt(e.target.value) || 1)}
+                  className="w-12 text-center border border-gray-200 rounded-lg py-0.5 text-sm font-bold focus:outline-none focus:border-indigo-400" />
+                <button onClick={() => changeInstallmentCount(installmentCount + 1)}
+                  className="w-6 h-6 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-200 flex items-center justify-center text-sm font-bold">+</button>
+              </div>
+              {parseFloat(grossValue.replace(",", ".")) > 0 && (
+                <button onClick={() => changeInstallmentCount(installmentCount)}
+                  className="text-xs text-indigo-600 hover:underline ml-auto">Redistribuir</button>
+              )}
+            </div>
             {installments.map((inst, idx) => (
               <div key={idx} className="flex items-center gap-2 p-2 bg-gray-50 rounded-xl border border-gray-200">
                 <div className="flex-1 min-w-0 grid grid-cols-[1fr_1fr_100px] gap-2 items-center">
@@ -556,8 +623,7 @@ function AlunoPaymentForm({
 function NovoAlunoModal({ onClose, onSave, plans }: { onClose: () => void; onSave: (a: Aluno) => void; plans: ServicePlan[] }) {
   const [form, setForm] = useState({
     name: "", email: "", phone: "", status: "ativo", source: "",
-    planName: "", planDetails: "", paymentMethod: "Pix",
-    negotiationNotes: "", notes: "",
+    planName: "", planDetails: "", notes: "",
   });
   const [saving, setSaving] = useState(false);
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
@@ -595,7 +661,12 @@ function NovoAlunoModal({ onClose, onSave, plans }: { onClose: () => void; onSav
             </div>
             <div>
               <label className="block text-xs font-semibold text-gray-500 mb-1">Telefone</label>
-              <input value={form.phone} onChange={e => set("phone", e.target.value)} placeholder="(55) 99999-9999" className={inputCls} />
+              <div className="relative">
+                <Phone className="w-4 h-4 text-gray-300 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input value={form.phone} onChange={e => set("phone", formatPhone(e.target.value))}
+                  placeholder="(XX) XXXXX-XXXX" maxLength={15}
+                  className="w-full border border-gray-200 rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
+              </div>
             </div>
             <div>
               <label className="block text-xs font-semibold text-gray-500 mb-1">Status</label>
@@ -648,40 +719,28 @@ function NovoAlunoModal({ onClose, onSave, plans }: { onClose: () => void; onSav
               )}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-1">Forma de Pagamento</label>
-                <select value={form.paymentMethod} onChange={e => set("paymentMethod", e.target.value)} className={inputCls}>
-                  {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-1">De qual funil veio?</label>
-                <select value={form.source} onChange={e => set("source", e.target.value)} className={inputCls}>
-                  <option value="">Selecionar...</option>
-                  {FUNIL_OPTIONS.map(f => <option key={f} value={f}>{f}</option>)}
-                </select>
-              </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">De qual funil veio?</label>
+              <select value={form.source} onChange={e => set("source", e.target.value)} className={inputCls}>
+                <option value="">Selecionar...</option>
+                {FUNIL_OPTIONS.map(f => <option key={f} value={f}>{f}</option>)}
+              </select>
             </div>
           </div>
 
-          <div className="border-t border-gray-100 pt-4 space-y-3">
-            <div>
-              <label className="block text-xs font-semibold text-gray-500 mb-1">Negociação</label>
-              <textarea rows={2} value={form.negotiationNotes} onChange={e => set("negotiationNotes", e.target.value)}
-                placeholder="Condições especiais, descontos, acordos..." className={`${inputCls} resize-none`} />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-gray-500 mb-1">Observações</label>
-              <textarea rows={2} value={form.notes} onChange={e => set("notes", e.target.value)}
-                placeholder="Notas gerais..." className={`${inputCls} resize-none`} />
-            </div>
+          <div className="border-t border-gray-100 pt-4">
+            <label className="block text-xs font-semibold text-gray-500 mb-1">Observações iniciais</label>
+            <textarea rows={2} value={form.notes} onChange={e => set("notes", e.target.value)}
+              placeholder="Objetivo, contexto, observações gerais..." className={`${inputCls} resize-none`} />
+            <p className="text-[10px] text-gray-400 mt-1.5">
+              💡 Pagamento e parcelas são registrados na ficha do aluno após o cadastro.
+            </p>
           </div>
 
           <div className="flex gap-2 pt-2 border-t border-gray-100">
             <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm border border-gray-200 text-gray-600 hover:bg-gray-50">Cancelar</button>
             <button type="submit" disabled={saving} className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-50" style={{ background: "#6366f1" }}>
-              {saving ? "Salvando..." : "Cadastrar e registrar pagamento →"}
+              {saving ? "Salvando..." : "Cadastrar aluno →"}
             </button>
           </div>
         </form>
@@ -886,6 +945,14 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
     setSavingObs(false);
   }
 
+  // Totais sempre calculados do sales state — reativos (devem vir antes de nextRecommendedAction)
+  const allInstallments = sales.flatMap(s => s.installments);
+  const pago    = allInstallments.filter(i => i.status === "pago").reduce((s, i) => s + i.amount, 0);
+  const pendente = allInstallments.filter(i => i.status !== "pago").reduce((s, i) => s + i.amount, 0);
+  const vencidas = allInstallments.filter(i => i.status !== "pago" && new Date(i.dueDate) < new Date());
+  const health: "green" | "red" = vencidas.length > 0 ? "red" : "green";
+  const contrato = aluno.files?.find(f => f.category === "contrato");
+
   // Próxima ação recomendada
   function nextRecommendedAction(): { text: string; color: string; icon: "alert" | "task" | "check" } | null {
     if (vencidas.length > 0) return { text: `${vencidas.length} parcela${vencidas.length > 1 ? "s" : ""} vencida${vencidas.length > 1 ? "s" : ""} — cobrar`, color: "red", icon: "alert" };
@@ -896,14 +963,6 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
     return null;
   }
   const nextAction = nextRecommendedAction();
-
-  // Totais sempre calculados do sales state — reativos
-  const allInstallments = sales.flatMap(s => s.installments);
-  const pago    = allInstallments.filter(i => i.status === "pago").reduce((s, i) => s + i.amount, 0);
-  const pendente = allInstallments.filter(i => i.status !== "pago").reduce((s, i) => s + i.amount, 0);
-  const vencidas = allInstallments.filter(i => i.status !== "pago" && new Date(i.dueDate) < new Date());
-  const health: "green" | "red" = vencidas.length > 0 ? "red" : "green";
-  const contrato = aluno.files?.find(f => f.category === "contrato");
 
   async function handleSave() {
     setSaving(true);
@@ -1029,7 +1088,7 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
                 <div className="col-span-2">
                   <input value={form.name} onChange={e => set("name", e.target.value)} placeholder="Nome" className={inputCls} />
                 </div>
-                <input value={form.phone} onChange={e => set("phone", e.target.value)} placeholder="Telefone" className={inputCls} />
+                <input value={form.phone} onChange={e => set("phone", formatPhone(e.target.value))} placeholder="(XX) XXXXX-XXXX" maxLength={15} className={inputCls} />
                 <select value={form.status} onChange={e => set("status", e.target.value)} className={inputCls}>
                   {STATUS_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                 </select>

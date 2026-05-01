@@ -436,25 +436,51 @@ function AlunoPaymentForm({
               )}
             </div>
             {installments.map((inst, idx) => (
-              <div key={idx} className="flex items-center gap-2 p-2 bg-gray-50 rounded-xl border border-gray-200">
-                <div className="flex-1 min-w-0 grid grid-cols-[1fr_1fr_100px] gap-2 items-center">
-                  <input value={inst.label} onChange={e => updateInstallment(idx, "label", e.target.value)}
-                    placeholder={`${idx + 1}ª parcela`} className={inputSmCls}/>
-                  <input type="number" step="0.01" value={inst.amount}
-                    onChange={e => updateInstallment(idx, "amount", e.target.value)}
-                    placeholder="R$" className={inputSmCls}/>
-                  <input type="date" value={inst.dueDate}
-                    onChange={e => updateInstallment(idx, "dueDate", e.target.value)}
-                    className={inputSmCls}/>
+              <div key={idx} className="bg-white rounded-xl border border-gray-200 p-3 space-y-2.5 shadow-sm">
+                {/* Linha 1 — número + nome + delete */}
+                <div className="flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 text-[11px] font-bold flex items-center justify-center shrink-0">
+                    {idx + 1}
+                  </span>
+                  <input
+                    value={inst.label}
+                    onChange={e => updateInstallment(idx, "label", e.target.value)}
+                    placeholder={`${idx + 1}ª parcela`}
+                    className="flex-1 text-sm font-medium text-gray-800 bg-transparent border-0 border-b border-gray-200 pb-0.5 focus:outline-none focus:border-indigo-400 placeholder-gray-300"
+                  />
+                  <button
+                    onClick={() => removeInstallment(idx)}
+                    className="text-gray-300 hover:text-red-400 shrink-0 p-0.5 rounded hover:bg-red-50 transition-colors">
+                    <X className="w-3.5 h-3.5"/>
+                  </button>
                 </div>
-                <label className="flex items-center gap-1 shrink-0">
-                  <input type="checkbox" checked={!!inst.paid}
-                    onChange={e => updateInstallment(idx, "paid", e.target.checked)}
-                    className="accent-green-600"/>
-                  <span className="text-[10px] text-gray-500">Pago</span>
-                </label>
-                <button onClick={() => removeInstallment(idx)}
-                  className="text-gray-300 hover:text-red-400 shrink-0"><X className="w-3.5 h-3.5"/></button>
+                {/* Linha 2 — valor + data + pago */}
+                <div className="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
+                  <div>
+                    <label className="block text-[10px] font-semibold text-gray-400 mb-1 uppercase tracking-wide">Valor</label>
+                    <input
+                      type="number" step="0.01" value={inst.amount}
+                      onChange={e => updateInstallment(idx, "amount", e.target.value)}
+                      placeholder="0,00"
+                      className="w-full border border-gray-200 rounded-lg px-2.5 py-2 text-sm font-semibold text-gray-800 focus:outline-none focus:border-indigo-400 bg-gray-50"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-gray-400 mb-1 uppercase tracking-wide">Vencimento</label>
+                    <input
+                      type="date" value={inst.dueDate}
+                      onChange={e => updateInstallment(idx, "dueDate", e.target.value)}
+                      className="w-full border border-indigo-200 rounded-lg px-2.5 py-2 text-sm font-medium text-indigo-700 bg-indigo-50 focus:outline-none focus:border-indigo-500 focus:bg-white transition-colors"
+                    />
+                  </div>
+                  <label className="flex items-center gap-1.5 cursor-pointer pb-0.5">
+                    <input
+                      type="checkbox" checked={!!inst.paid}
+                      onChange={e => updateInstallment(idx, "paid", e.target.checked)}
+                      className="accent-green-600 w-3.5 h-3.5"/>
+                    <span className="text-[11px] text-gray-500 font-medium">Pago</span>
+                  </label>
+                </div>
               </div>
             ))}
             <button onClick={addInstallment}

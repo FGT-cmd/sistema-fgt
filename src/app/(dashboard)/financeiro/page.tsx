@@ -1305,6 +1305,21 @@ export default function FinanceiroPage() {
   const overdueCount   = txs.filter(t=>t.type==="despesa"&&t.status!=="pago"&&t.dueDate&&new Date(t.dueDate)<new Date()).length;
   const parcelasOk     = sales.flatMap(s=>s.installments).filter(i=>i.status!=="pago").length;
 
+  // Parcelas vencendo nos próximos 7 dias (excluindo hoje e vencidas)
+  const _todayEnd = new Date(); _todayEnd.setHours(23, 59, 59, 999);
+  const _nextWeek = new Date(_todayEnd.getTime() + 7 * 24 * 60 * 60 * 1000);
+  type WeekInst = { id: string; amount: number; dueDate: string; clientName: string };
+  const weekInstallments: WeekInst[] = sales
+    .flatMap(s => s.installments
+      .filter(i => {
+        const d = new Date(i.dueDate);
+        return i.status !== "pago" && d > _todayEnd && d <= _nextWeek;
+      })
+      .map(i => ({ id: i.id, amount: i.amount, dueDate: i.dueDate, clientName: s.client.name }))
+    )
+    .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime())
+    .slice(0, 8);
+
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">
       {/* ── Header ─────────────────────────────── */}
@@ -1338,38 +1353,41 @@ export default function FinanceiroPage() {
           </div>
         </div>
 
-        {/* Summary strip */}
-        <div className="flex items-center gap-3 mb-4 flex-wrap">
-          <div className="flex items-center gap-2 bg-gray-50 rounded-xl px-3 py-2 border border-gray-200">
-            <Wallet className="w-3.5 h-3.5 text-gray-400"/>
-            <div>
-              <p className="text-[9px] text-gray-400 uppercase font-bold">Saldo Inicial</p>
+        {/* ── KPI Cards ─────────────────────────────── */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+          <div className="bg-green-50 rounded-2xl px-4 py-3 border border-green-100">
+            <p className="text-[10px] text-green-500 uppercase font-bold tracking-wide mb-0.5">Recebido</p>
+            <p className="text-lg font-bold text-green-700">{fmt(realR)}</p>
+            <p className="text-[10px] text-green-400">/ {fmt(totalR)} previsto</p>
+          </div>
+          <div className="bg-amber-50 rounded-2xl px-4 py-3 border border-amber-100">
+            <p className="text-[10px] text-amber-500 uppercase font-bold tracking-wide mb-0.5">A Receber</p>
+            <p className="text-lg font-bold text-amber-700">{fmt(totalR - realR)}</p>
+            <p className="text-[10px] text-amber-400">{monthTxs.filter(t=>t.type==="receita"&&t.status!=="pago").length} pendentes</p>
+          </div>
+          <div className="bg-red-50 rounded-2xl px-4 py-3 border border-red-100">
+            <p className="text-[10px] text-red-400 uppercase font-bold tracking-wide mb-0.5">Despesas</p>
+            <p className="text-lg font-bold text-red-600">{fmt(realD)}</p>
+            <p className="text-[10px] text-red-300">/ {fmt(totalD)} previsto</p>
+          </div>
+          <div className={`rounded-2xl px-4 py-3 border ${(realR-realD)>=0?"bg-indigo-50 border-indigo-100":"bg-orange-50 border-orange-100"}`}>
+            <p className={`text-[10px] uppercase font-bold tracking-wide mb-0.5 ${(realR-realD)>=0?"text-indigo-400":"text-orange-400"}`}>Lucro</p>
+            <p className={`text-lg font-bold ${(realR-realD)>=0?"text-indigo-700":"text-orange-600"}`}>{fmt(realR-realD)}</p>
+            <p className={`text-[10px] ${(realR-realD)>=0?"text-indigo-300":"text-orange-300"}`}>receitas − despesas</p>
+          </div>
+          <div className={`rounded-2xl px-4 py-3 border ${(saldo+realR-realD)>=0?"bg-gray-50 border-gray-200":"bg-red-50 border-red-200"}`}>
+            <div className="flex items-center gap-1 mb-0.5">
+              <Target className="w-3 h-3 text-gray-400"/>
+              <p className="text-[10px] text-gray-400 uppercase font-bold tracking-wide">Saldo Final</p>
+            </div>
+            <p className={`text-lg font-bold ${(saldo+realR-realD)>=0?"text-gray-800":"text-red-600"}`}>{fmt(saldo+realR-realD)}</p>
+            <div className="flex items-center gap-1 mt-0.5">
+              <Wallet className="w-2.5 h-2.5 text-gray-300"/>
               <input value={saldoInicial} onChange={e=>setSaldoInicial(e.target.value)}
-                placeholder="0,00" className="text-xs font-bold text-gray-800 bg-transparent w-20 focus:outline-none"/>
+                placeholder="saldo inicial 0,00"
+                className="text-[10px] text-gray-400 bg-transparent w-full focus:outline-none"/>
             </div>
           </div>
-          <div className="bg-green-50 rounded-xl px-3 py-2 border border-green-100">
-            <p className="text-[9px] text-green-500 uppercase font-bold">Receitas</p>
-            <p className="text-xs font-bold text-green-700">{fmt(realR)} <span className="text-green-400 font-normal">/ {fmt(totalR)}</span></p>
-          </div>
-          <div className="bg-red-50 rounded-xl px-3 py-2 border border-red-100">
-            <p className="text-[9px] text-red-400 uppercase font-bold">Despesas</p>
-            <p className="text-xs font-bold text-red-600">{fmt(realD)} <span className="text-red-300 font-normal">/ {fmt(totalD)}</span></p>
-          </div>
-          <div className={`rounded-xl px-3 py-2 border ${(realR-realD)>=0?"bg-indigo-50 border-indigo-100":"bg-orange-50 border-orange-100"}`}>
-            <p className={`text-[9px] uppercase font-bold ${(realR-realD)>=0?"text-indigo-400":"text-orange-400"}`}>Lucro</p>
-            <p className={`text-xs font-bold ${(realR-realD)>=0?"text-indigo-700":"text-orange-600"}`}>{fmt(realR-realD)}</p>
-          </div>
-          <div className={`rounded-xl px-3 py-2 border ${(saldo+realR-realD)>=0?"bg-gray-50 border-gray-200":"bg-red-50 border-red-200"}`}>
-            <p className="text-[9px] text-gray-400 uppercase font-bold flex items-center gap-1"><Target className="w-2.5 h-2.5"/>Saldo Final</p>
-            <p className={`text-xs font-bold ${(saldo+realR-realD)>=0?"text-gray-800":"text-red-600"}`}>{fmt(saldo+realR-realD)}</p>
-          </div>
-          {overdueCount > 0 && (
-            <div className="bg-red-50 rounded-xl px-3 py-2 border border-red-200 flex items-center gap-1.5">
-              <AlertCircle className="w-3.5 h-3.5 text-red-500"/>
-              <p className="text-xs font-bold text-red-600">{overdueCount} conta{overdueCount>1?"s":""} vencida{overdueCount>1?"s":""}</p>
-            </div>
-          )}
         </div>
 
         {/* ── Alertas financeiros ───────────────────── */}
@@ -1451,6 +1469,31 @@ export default function FinanceiroPage() {
                           <span className="text-sm font-semibold text-amber-700">{fmt(inst.amount)}</span>
                         </div>
                       ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Vencimentos da semana */}
+                {weekInstallments.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-blue-700 uppercase tracking-widest mb-1.5">
+                      Vencem esta semana ({weekInstallments.length})
+                    </p>
+                    <div className="space-y-1">
+                      {weekInstallments.map((inst) => {
+                        const d = new Date(inst.dueDate);
+                        const diff = Math.round((d.getTime() - _todayEnd.getTime()) / (1000*60*60*24));
+                        const label = diff === 1 ? "amanhã" : d.toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" });
+                        return (
+                          <div key={inst.id} className="flex items-center justify-between bg-white rounded-lg px-3 py-2 border border-blue-100">
+                            <div>
+                              <span className="text-sm font-medium text-gray-800">{inst.clientName}</span>
+                              <span className="text-xs text-blue-500 ml-2">{label}</span>
+                            </div>
+                            <span className="text-sm font-semibold text-blue-700">{fmt(inst.amount)}</span>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}

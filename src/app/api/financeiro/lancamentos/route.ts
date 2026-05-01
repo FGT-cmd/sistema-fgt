@@ -5,7 +5,8 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const month = searchParams.get("month");
 
-  let where = {};
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let where: any = {};
   if (month) {
     const [year, m] = month.split("-").map(Number);
     const start = new Date(year, m - 1, 1);

@@ -11,6 +11,7 @@ export async function GET() {
   const todayEnd = new Date(now);
   todayEnd.setHours(23, 59, 59, 999);
   const nextWeek = new Date(todayEnd.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
   const [
     todayTasks,
@@ -19,10 +20,13 @@ export async function GET() {
     activeStudents,
     overduePayments,
     todayPayments,
+    weekPayments,
     upcomingEvents,
     priorityTasks,
+    recebidoMes,
+    aReceberTotal,
   ] = await Promise.all([
-    // Tarefas de hoje (pending + in_progress)
+    // Tarefas de hoje
     prisma.todoTask.findMany({
       where: {
         userId: user.id,
@@ -33,7 +37,7 @@ export async function GET() {
       orderBy: [{ urgent: "desc" }, { important: "desc" }, { createdAt: "asc" }],
     }),
 
-    // Lista tarefas atrasadas (top 6 para exibição)
+    // Lista tarefas atrasadas (top 6)
     prisma.todoTask.findMany({
       where: {
         userId: user.id,
@@ -55,9 +59,7 @@ export async function GET() {
     }),
 
     // Alunos ativos
-    prisma.client.count({
-      where: { userId: user.id, status: "ativo" },
-    }),
+    prisma.client.count({ where: { userId: user.id, status: "ativo" } }),
 
     // Parcelas vencidas (não pagas, dueDate < hoje)
     prisma.installment.findMany({
@@ -98,7 +100,27 @@ export async function GET() {
       orderBy: { amount: "desc" },
     }),
 
-    // Próximos eventos (próximos 7 dias, a partir de agora)
+    // Parcelas vencendo nos próximos 7 dias (excluindo hoje)
+    prisma.installment.findMany({
+      where: {
+        status: { not: "pago" },
+        dueDate: { gt: todayEnd, lte: nextWeek },
+        sale: { client: { userId: user.id } },
+      },
+      include: {
+        sale: {
+          select: {
+            id: true,
+            description: true,
+            client: { select: { id: true, name: true } },
+          },
+        },
+      },
+      orderBy: { dueDate: "asc" },
+      take: 8,
+    }),
+
+    // Próximos eventos (próximos 7 dias)
     prisma.calendarEvent.findMany({
       where: {
         userId: user.id,
@@ -123,7 +145,41 @@ export async function GET() {
       orderBy: [{ urgent: "desc" }, { important: "desc" }, { dueDate: "asc" }],
       take: 6,
     }),
+
+    // Recebido este mês (parcelas pagas)
+    prisma.installment.aggregate({
+      where: {
+        status: "pago",
+        paidAt: { gte: monthStart, lte: todayEnd },
+        sale: { client: { userId: user.id } },
+      },
+      _sum: { amount: true },
+    }),
+
+    // A receber (parcelas não pagas com vencimento futuro)
+    prisma.installment.aggregate({
+      where: {
+        status: { not: "pago" },
+        dueDate: { gt: todayEnd },
+        sale: { client: { userId: user.id } },
+      },
+      _sum: { amount: true },
+    }),
   ]);
+
+  // Atrasado: soma das parcelas vencidas
+  const atrasadoTotal = overduePayments.reduce((s, p) => s + p.amount, 0);
+
+  // Alunos em atenção: derivados de overduePayments agrupados por cliente
+  const clientsMap = new Map<string, { id: string; name: string; overdueCount: number; overdueTotal: number }>();
+  for (const p of overduePayments) {
+    const { id, name } = p.sale.client;
+    const ex = clientsMap.get(id) ?? { id, name, overdueCount: 0, overdueTotal: 0 };
+    ex.overdueCount++;
+    ex.overdueTotal += p.amount;
+    clientsMap.set(id, ex);
+  }
+  const studentsAttention = Array.from(clientsMap.values()).slice(0, 5);
 
   return NextResponse.json({
     todayTasks,
@@ -133,7 +189,14 @@ export async function GET() {
     pendingFinancial: overduePayments.length + todayPayments.length,
     overduePayments,
     todayPayments,
+    weekPayments,
     upcomingEvents,
     priorityTasks,
+    studentsAttention,
+    financialSummary: {
+      recebidoMes: recebidoMes._sum.amount ?? 0,
+      aReceber: aReceberTotal._sum.amount ?? 0,
+      atrasado: atrasadoTotal,
+    },
   });
 }

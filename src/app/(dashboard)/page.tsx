@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   CheckSquare, DollarSign, Users, AlertTriangle, Loader2, Check,
   ArrowRight, Calendar, Clock, ChevronRight, Zap, Star,
-  TrendingUp, FolderKanban,
+  TrendingUp, FolderKanban, Bot, TrendingDown, UserX,
 } from "lucide-react";
 import { formatDate, formatCurrency } from "@/lib/utils";
 
@@ -43,6 +43,13 @@ type CalEvent = {
   client: { id: string; name: string } | null;
 };
 
+type StudentAttention = {
+  id: string;
+  name: string;
+  overdueCount: number;
+  overdueTotal: number;
+};
+
 type Summary = {
   todayTasks: Task[];
   overdueTasksList: Task[];
@@ -51,8 +58,15 @@ type Summary = {
   pendingFinancial: number;
   overduePayments: Payment[];
   todayPayments: Payment[];
+  weekPayments: Payment[];
   upcomingEvents: CalEvent[];
   priorityTasks: Task[];
+  studentsAttention: StudentAttention[];
+  financialSummary: {
+    recebidoMes: number;
+    aReceber: number;
+    atrasado: number;
+  };
 };
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -96,6 +110,21 @@ function daysOverdue(dueDate: string): number {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   return Math.max(0, Math.floor((today.getTime() - due.getTime()) / (1000 * 60 * 60 * 24)));
+}
+
+function weekDayLabel(iso: string): string {
+  const d = new Date(iso);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  d.setHours(0, 0, 0, 0);
+  const diff = Math.round((d.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+  if (diff === 1) return "amanhã";
+  if (diff <= 6) return d.toLocaleDateString("pt-BR", { weekday: "short" }).replace(".", "");
+  return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+}
+
+function fmt(v: number) {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
 }
 
 // ─── TaskRow ─────────────────────────────────────────────────────────────────
@@ -147,38 +176,48 @@ function TaskRow({
 // ─── PaymentRow ───────────────────────────────────────────────────────────────
 
 function PaymentRow({
-  payment, isToday, onMarkPaid, paying,
+  payment, variant, onMarkPaid, paying,
 }: {
   payment: Payment;
-  isToday: boolean;
+  variant: "overdue" | "today" | "week";
   onMarkPaid: (p: Payment) => void;
   paying: boolean;
 }) {
-  const days = daysOverdue(payment.dueDate);
+  const days = variant === "overdue" ? daysOverdue(payment.dueDate) : 0;
+  const bgClass = variant === "overdue" ? "bg-red-50" : variant === "today" ? "bg-amber-50" : "bg-blue-50";
+  const textClass = variant === "overdue" ? "text-red-500" : variant === "today" ? "text-amber-600" : "text-blue-500";
+  const amountClass = variant === "overdue" ? "text-red-700" : variant === "today" ? "text-amber-700" : "text-blue-700";
+  const btnClass = variant === "overdue" ? "bg-red-600 hover:bg-red-700" : variant === "today" ? "bg-amber-600 hover:bg-amber-700" : "bg-blue-600 hover:bg-blue-700";
+
+  const subLabel = variant === "overdue"
+    ? `${days}d atraso`
+    : variant === "today"
+    ? "vence hoje"
+    : weekDayLabel(payment.dueDate);
+
   return (
-    <div className={`flex items-center gap-2 px-2 py-2 rounded-xl ${isToday ? "bg-amber-50" : "bg-red-50"}`}>
+    <div className={`flex items-center gap-2 px-2 py-2 rounded-xl ${bgClass}`}>
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-gray-800 truncate">
           {payment.sale.client.name}
         </p>
-        <p className={`text-xs truncate ${isToday ? "text-amber-600" : "text-red-500"}`}>
-          {payment.label ?? payment.sale.description}
-          {isToday ? " · vence hoje" : ` · ${days}d atraso`}
+        <p className={`text-xs truncate ${textClass}`}>
+          {payment.label ?? payment.sale.description} · {subLabel}
         </p>
       </div>
       <div className="flex items-center gap-1.5 flex-shrink-0">
-        <span className={`text-sm font-semibold ${isToday ? "text-amber-700" : "text-red-700"}`}>
+        <span className={`text-sm font-semibold ${amountClass}`}>
           {formatCurrency(payment.amount)}
         </span>
-        <button
-          onClick={() => onMarkPaid(payment)}
-          disabled={paying}
-          className={`text-xs text-white rounded-lg px-2 py-1 transition-colors disabled:opacity-50 ${
-            isToday ? "bg-amber-600 hover:bg-amber-700" : "bg-red-600 hover:bg-red-700"
-          }`}
-        >
-          {paying ? "..." : "Pago"}
-        </button>
+        {variant !== "week" && (
+          <button
+            onClick={() => onMarkPaid(payment)}
+            disabled={paying}
+            className={`text-xs text-white rounded-lg px-2 py-1 transition-colors disabled:opacity-50 ${btnClass}`}
+          >
+            {paying ? "..." : "Pago"}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -212,11 +251,10 @@ export default function HomePage() {
     setSummary((prev) => {
       if (!prev) return prev;
       const filter = (arr: Task[]) => arr.filter((t) => t.id !== id);
-      const newOverdue = filter(prev.overdueTasksList);
       return {
         ...prev,
         todayTasks: filter(prev.todayTasks),
-        overdueTasksList: newOverdue,
+        overdueTasksList: filter(prev.overdueTasksList),
         overdueTasks: prev.overdueTasks - (prev.overdueTasksList.some(t => t.id === id) ? 1 : 0),
         priorityTasks: filter(prev.priorityTasks),
       };
@@ -233,29 +271,35 @@ export default function HomePage() {
     });
     setSummary((prev) => {
       if (!prev) return prev;
-      const isOverdue = prev.overduePayments.some((p) => p.id === payment.id);
       return {
         ...prev,
         overduePayments: prev.overduePayments.filter((p) => p.id !== payment.id),
         todayPayments: prev.todayPayments.filter((p) => p.id !== payment.id),
         pendingFinancial: Math.max(0, prev.pendingFinancial - 1),
-        overduePayments_count: isOverdue ? (prev.overduePayments.length - 1) : prev.overduePayments.length,
-      } as Summary;
+        financialSummary: {
+          ...prev.financialSummary,
+          atrasado: Math.max(0, prev.financialSummary.atrasado - payment.amount),
+        },
+      };
     });
     setPayingOff((prev) => { const s = new Set(prev); s.delete(payment.id); return s; });
   }
 
-  const overduePayments = summary?.overduePayments ?? [];
-  const todayPayments = summary?.todayPayments ?? [];
-  const hasPayments = overduePayments.length > 0 || todayPayments.length > 0;
-  const hasEvents = (summary?.upcomingEvents?.length ?? 0) > 0;
-  const hasPriority = (summary?.priorityTasks?.length ?? 0) > 0;
-  const hasOverdueTasks = (summary?.overdueTasks ?? 0) > 0;
+  const overduePayments   = summary?.overduePayments ?? [];
+  const todayPayments     = summary?.todayPayments ?? [];
+  const weekPayments      = summary?.weekPayments ?? [];
+  const hasPayments       = overduePayments.length > 0 || todayPayments.length > 0 || weekPayments.length > 0;
+  const hasCriticalPayments = overduePayments.length > 0 || todayPayments.length > 0;
+  const hasEvents         = (summary?.upcomingEvents?.length ?? 0) > 0;
+  const hasPriority       = (summary?.priorityTasks?.length ?? 0) > 0;
+  const hasOverdueTasks   = (summary?.overdueTasks ?? 0) > 0;
+  const hasAttention      = (summary?.studentsAttention?.length ?? 0) > 0;
+  const fin               = summary?.financialSummary ?? { recebidoMes: 0, aReceber: 0, atrasado: 0 };
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
-      {/* Header */}
-      <div className="mb-6">
+      {/* ── Header ─────────────────────────────────────────────── */}
+      <div className="mb-5">
         <h1 className="text-2xl font-bold text-gray-900">
           {greeting()}, Fernando 👋
         </h1>
@@ -268,8 +312,35 @@ export default function HomePage() {
         </div>
       ) : (
         <>
-          {/* Stats row */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+          {/* ── Resumo financeiro (mini-bar) ────────────────────── */}
+          <div className="grid grid-cols-3 gap-3 mb-5">
+            <div className="rounded-2xl p-4 border border-green-100 bg-green-50">
+              <div className="flex items-center gap-2 mb-1">
+                <TrendingUp className="w-3.5 h-3.5 text-green-600" />
+                <span className="text-xs font-semibold text-green-600 uppercase tracking-wide">Recebido (mês)</span>
+              </div>
+              <p className="text-xl font-bold text-green-700">{fmt(fin.recebidoMes)}</p>
+            </div>
+            <div className="rounded-2xl p-4 border border-amber-100 bg-amber-50">
+              <div className="flex items-center gap-2 mb-1">
+                <Clock className="w-3.5 h-3.5 text-amber-500" />
+                <span className="text-xs font-semibold text-amber-600 uppercase tracking-wide">A Receber</span>
+              </div>
+              <p className="text-xl font-bold text-amber-700">{fmt(fin.aReceber)}</p>
+            </div>
+            <div className={`rounded-2xl p-4 border ${fin.atrasado > 0 ? "border-red-200 bg-red-50" : "border-gray-100 bg-gray-50"}`}>
+              <div className="flex items-center gap-2 mb-1">
+                <TrendingDown className={`w-3.5 h-3.5 ${fin.atrasado > 0 ? "text-red-500" : "text-gray-300"}`} />
+                <span className={`text-xs font-semibold uppercase tracking-wide ${fin.atrasado > 0 ? "text-red-500" : "text-gray-400"}`}>Atrasado</span>
+              </div>
+              <p className={`text-xl font-bold ${fin.atrasado > 0 ? "text-red-700" : "text-gray-300"}`}>
+                {fmt(fin.atrasado)}
+              </p>
+            </div>
+          </div>
+
+          {/* ── KPIs ─────────────────────────────────────────────── */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
             <Link
               href="/tarefas"
               className="rounded-2xl p-4 border border-gray-100 hover:shadow-md transition-shadow bg-[#eef2ff]"
@@ -278,18 +349,12 @@ export default function HomePage() {
                 <span className="text-xs font-medium text-gray-500">Tarefas hoje</span>
                 <CheckSquare className="w-4 h-4 text-indigo-500" />
               </div>
-              <p className="text-2xl font-bold text-indigo-600">
-                {summary?.todayTasks.length ?? 0}
-              </p>
+              <p className="text-2xl font-bold text-indigo-600">{summary?.todayTasks.length ?? 0}</p>
             </Link>
 
             <Link
               href="/tarefas"
-              className={`rounded-2xl p-4 border hover:shadow-md transition-shadow ${
-                hasOverdueTasks
-                  ? "border-red-100 bg-[#fef2f2]"
-                  : "border-gray-100 bg-[#f8fafc]"
-              }`}
+              className={`rounded-2xl p-4 border hover:shadow-md transition-shadow ${hasOverdueTasks ? "border-red-100 bg-[#fef2f2]" : "border-gray-100 bg-[#f8fafc]"}`}
             >
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-medium text-gray-500">Atrasadas</span>
@@ -302,18 +367,14 @@ export default function HomePage() {
 
             <Link
               href="/financeiro"
-              className={`rounded-2xl p-4 border hover:shadow-md transition-shadow ${
-                overduePayments.length > 0
-                  ? "border-red-100 bg-[#fef2f2]"
-                  : "border-gray-100 bg-[#f8fafc]"
-              }`}
+              className={`rounded-2xl p-4 border hover:shadow-md transition-shadow ${hasCriticalPayments ? "border-red-100 bg-[#fef2f2]" : "border-gray-100 bg-[#f8fafc]"}`}
             >
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-medium text-gray-500">Pag. vencidos</span>
-                <DollarSign className={`w-4 h-4 ${overduePayments.length > 0 ? "text-red-500" : "text-gray-300"}`} />
+                <span className="text-xs font-medium text-gray-500">Pag. críticos</span>
+                <DollarSign className={`w-4 h-4 ${hasCriticalPayments ? "text-red-500" : "text-gray-300"}`} />
               </div>
-              <p className={`text-2xl font-bold ${overduePayments.length > 0 ? "text-red-600" : "text-gray-300"}`}>
-                {overduePayments.length}
+              <p className={`text-2xl font-bold ${hasCriticalPayments ? "text-red-600" : "text-gray-300"}`}>
+                {overduePayments.length + todayPayments.length}
               </p>
             </Link>
 
@@ -325,16 +386,14 @@ export default function HomePage() {
                 <span className="text-xs font-medium text-gray-500">Alunos ativos</span>
                 <Users className="w-4 h-4 text-emerald-500" />
               </div>
-              <p className="text-2xl font-bold text-emerald-600">
-                {summary?.activeStudents ?? 0}
-              </p>
+              <p className="text-2xl font-bold text-emerald-600">{summary?.activeStudents ?? 0}</p>
             </Link>
           </div>
 
-          {/* Main grid: tarefas (left) + pagamentos/eventos (right) */}
+          {/* ── Grid principal ────────────────────────────────────── */}
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 mb-4">
 
-            {/* LEFT — Tarefas */}
+            {/* LEFT — Tarefas + Alunos em atenção */}
             <div className="lg:col-span-3 space-y-4">
 
               {/* Tarefas de hoje */}
@@ -415,6 +474,43 @@ export default function HomePage() {
                   </div>
                 </div>
               )}
+
+              {/* Alunos em atenção */}
+              {hasAttention && (
+                <div className="bg-white rounded-2xl border border-orange-100 shadow-sm">
+                  <div className="flex items-center justify-between px-5 py-4 border-b border-orange-50">
+                    <h2 className="font-semibold text-orange-700 text-sm flex items-center gap-2">
+                      <UserX className="w-4 h-4 text-orange-500" />
+                      Alunos em atenção
+                      <span className="text-xs bg-orange-100 text-orange-600 rounded-full px-2 py-0.5 font-medium">
+                        {summary?.studentsAttention.length}
+                      </span>
+                    </h2>
+                    <Link href="/alunos" className="text-xs text-orange-500 hover:text-orange-600 font-medium flex items-center gap-1">
+                      Ver alunos <ArrowRight className="w-3 h-3" />
+                    </Link>
+                  </div>
+                  <div className="p-3 space-y-1">
+                    {summary?.studentsAttention.map((s) => (
+                      <Link
+                        key={s.id}
+                        href={`/alunos`}
+                        className="flex items-center justify-between px-2 py-2 rounded-xl hover:bg-orange-50 transition-colors"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-800 truncate">{s.name}</p>
+                          <p className="text-xs text-orange-500">
+                            {s.overdueCount} parcela{s.overdueCount > 1 ? "s" : ""} vencida{s.overdueCount > 1 ? "s" : ""}
+                          </p>
+                        </div>
+                        <span className="text-sm font-semibold text-red-600 flex-shrink-0">
+                          {fmt(s.overdueTotal)}
+                        </span>
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* RIGHT — Pagamentos + Eventos */}
@@ -428,11 +524,9 @@ export default function HomePage() {
                     Pagamentos
                     {hasPayments && (
                       <span className={`text-xs rounded-full px-2 py-0.5 font-medium ${
-                        overduePayments.length > 0
-                          ? "bg-red-100 text-red-600"
-                          : "bg-amber-100 text-amber-600"
+                        hasCriticalPayments ? "bg-red-100 text-red-600" : "bg-blue-100 text-blue-600"
                       }`}>
-                        {overduePayments.length + todayPayments.length}
+                        {overduePayments.length + todayPayments.length + weekPayments.length}
                       </span>
                     )}
                   </h2>
@@ -450,24 +544,51 @@ export default function HomePage() {
                     </div>
                   ) : (
                     <div className="space-y-1">
-                      {todayPayments.map((payment) => (
-                        <PaymentRow
-                          key={payment.id}
-                          payment={payment}
-                          isToday={true}
-                          onMarkPaid={handleMarkPaid}
-                          paying={payingOff.has(payment.id)}
-                        />
-                      ))}
-                      {overduePayments.map((payment) => (
-                        <PaymentRow
-                          key={payment.id}
-                          payment={payment}
-                          isToday={false}
-                          onMarkPaid={handleMarkPaid}
-                          paying={payingOff.has(payment.id)}
-                        />
-                      ))}
+                      {/* Atrasados */}
+                      {overduePayments.length > 0 && (
+                        <>
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-red-400 px-2 pt-1">Vencidos</p>
+                          {overduePayments.map((payment) => (
+                            <PaymentRow
+                              key={payment.id}
+                              payment={payment}
+                              variant="overdue"
+                              onMarkPaid={handleMarkPaid}
+                              paying={payingOff.has(payment.id)}
+                            />
+                          ))}
+                        </>
+                      )}
+                      {/* Hoje */}
+                      {todayPayments.length > 0 && (
+                        <>
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-amber-500 px-2 pt-1">Vence hoje</p>
+                          {todayPayments.map((payment) => (
+                            <PaymentRow
+                              key={payment.id}
+                              payment={payment}
+                              variant="today"
+                              onMarkPaid={handleMarkPaid}
+                              paying={payingOff.has(payment.id)}
+                            />
+                          ))}
+                        </>
+                      )}
+                      {/* Semana */}
+                      {weekPayments.length > 0 && (
+                        <>
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-blue-400 px-2 pt-1">Esta semana</p>
+                          {weekPayments.map((payment) => (
+                            <PaymentRow
+                              key={payment.id}
+                              payment={payment}
+                              variant="week"
+                              onMarkPaid={handleMarkPaid}
+                              paying={payingOff.has(payment.id)}
+                            />
+                          ))}
+                        </>
+                      )}
                     </div>
                   )}
                 </div>
@@ -528,7 +649,7 @@ export default function HomePage() {
             </div>
           </div>
 
-          {/* Prioridades do dia (urgente/importante sem data ou data futura) */}
+          {/* ── Prioridades ────────────────────────────────────────── */}
           {hasPriority && (
             <div className="bg-white rounded-2xl border border-purple-100 shadow-sm mb-4">
               <div className="flex items-center justify-between px-5 py-4 border-b border-purple-50">
@@ -556,7 +677,7 @@ export default function HomePage() {
             </div>
           )}
 
-          {/* Acesso rápido + WhatsApp */}
+          {/* ── Acesso rápido ─────────────────────────────────────── */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm">
               <div className="px-5 py-4 border-b border-gray-50">
@@ -584,13 +705,36 @@ export default function HomePage() {
               </div>
             </div>
 
-            <div className="bg-white rounded-2xl border border-dashed border-gray-200 p-5 flex flex-col items-center justify-center text-center min-h-[120px]">
-              <p className="text-xs font-semibold uppercase tracking-widest text-gray-300 mb-1">Em breve</p>
-              <p className="text-sm font-medium text-gray-400">WhatsApp Assistente</p>
-              <p className="text-xs text-gray-300 mt-1 max-w-xs">
-                Registre tarefas, pagamentos e ideias direto pelo WhatsApp
+            {/* OpenClaw Assistant */}
+            <Link
+              href="/openclaw"
+              className="bg-white rounded-2xl border border-indigo-100 shadow-sm p-5 flex flex-col justify-between hover:shadow-md transition-shadow"
+            >
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: "#6366f1" }}>
+                  <Bot className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-gray-900">OpenClaw Assistant</p>
+                  <p className="text-xs text-gray-400">Assistente operacional via Telegram</p>
+                </div>
+              </div>
+              <div className="space-y-1">
+                {[
+                  "Quem não pagou?",
+                  "Julia pagou 300 hoje no pix",
+                  "Me lembra de cobrar Ana sexta",
+                ].map((ex) => (
+                  <p key={ex} className="text-xs text-gray-400 flex items-center gap-1.5">
+                    <span className="w-1 h-1 rounded-full bg-indigo-300 flex-shrink-0" />
+                    {ex}
+                  </p>
+                ))}
+              </div>
+              <p className="text-xs text-indigo-500 font-medium mt-3 flex items-center gap-1">
+                Abrir assistente <ArrowRight className="w-3 h-3" />
               </p>
-            </div>
+            </Link>
           </div>
         </>
       )}

@@ -75,6 +75,14 @@ function totalPendente(a: Aluno) { return a.sales.flatMap(s => s.installments).f
 
 const inputCls = "w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white";
 
+function nextBusinessDay(fromIso: string): string {
+  const d = new Date(fromIso + "T12:00:00");
+  d.setDate(d.getDate() + 1);
+  if (d.getDay() === 0) d.setDate(d.getDate() + 1);
+  if (d.getDay() === 6) d.setDate(d.getDate() + 2);
+  return d.toISOString().slice(0, 10);
+}
+
 function formatPhone(raw: string): string {
   const d = raw.replace(/\D/g, "").slice(0, 11);
   if (d.length <= 2) return d;
@@ -112,11 +120,10 @@ function AlunoPaymentForm({
     { amount: "", dueDate: today, label: "Parcela 1" }
   ]);
 
-  // Cartão
-  const [grossValue, setGrossValue]   = useState("");
-  const [netValue, setNetValue]       = useState("");
-  const [cashFlowDate, setCashDate]   = useState(today);
-  const [anticipation, setAnticip]    = useState(false);
+  // Cartão — taxa é do aluno, você recebe o total; caixa = 1 dia útil após a venda
+  const [grossValue, setGrossValue] = useState("");
+  const [saleDate, setSaleDate]     = useState(today);
+  const [cashFlowDate, setCashDate] = useState(() => nextBusinessDay(today));
   // Para cartão sem antecipação: parcelas editáveis com datas livres
   const [cardInstallments, setCardInstallments] = useState<InstallmentDraft[]>([
     { amount: "", dueDate: today, label: "Parcela 1" }
@@ -161,7 +168,6 @@ function AlunoPaymentForm({
     setSelectedPlanId(p.id);
     setCustomPlanName("");
     setGrossValue(String(p.totalAmount));
-    setNetValue(String(p.totalAmount));
     // Usa installmentCount atual, não o padrão do plano
     const count = installmentCount || p.installments;
     setInstallmentCount(count);
@@ -259,18 +265,11 @@ function AlunoPaymentForm({
     if (negType === "card") {
       const gross = parseFloat(grossValue.replace(",", ".")) || 0;
       if (!gross) return;
-      body.totalAmount = gross;
-      body.grossValue  = gross;
-      if (anticipation) {
-        const net = parseFloat(netValue.replace(",", ".")) || gross;
-        body.netValue     = net;
-        body.cashFlowDate = cashFlowDate;
-        body.customInstallments = [{ amount: net, dueDate: cashFlowDate, label: "Recebimento antecipado", netValue: net }];
-      } else {
-        body.customInstallments = cardInstallments
-          .filter(i => parseFloat(i.amount) > 0)
-          .map(i => ({ ...i, amount: parseFloat(i.amount) }));
-      }
+      body.totalAmount  = gross;
+      body.grossValue   = gross;
+      body.netValue     = gross; // taxa é do aluno, valor recebido = total
+      body.cashFlowDate = cashFlowDate;
+      body.customInstallments = [{ amount: gross, dueDate: cashFlowDate, label: "Cartão — entrada no caixa", paid: false }];
     } else {
       const total = installments.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
       if (!total) return;
@@ -302,10 +301,9 @@ function AlunoPaymentForm({
   function getResumo() {
     if (negType === "card") {
       const gross = totalCard;
-      const net   = anticipation ? (parseFloat(netValue.replace(",", ".")) || gross) : gross;
-      return { faturamento: gross, caixa: net, parcelas: anticipation ? 1 : cardInstallments.filter(i => parseFloat(i.amount) > 0).length };
+      return { faturamento: gross, caixa: gross, parcelas: 1, cashDate: cashFlowDate };
     }
-    return { faturamento: totalInstallments, caixa: totalInstallments, parcelas: installments.filter(i => parseFloat(i.amount) > 0).length };
+    return { faturamento: totalInstallments, caixa: totalInstallments, parcelas: installments.filter(i => parseFloat(i.amount) > 0).length, cashDate: null };
   }
   const resumo = getResumo();
   const inputClsLocal = "w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white";
@@ -326,7 +324,7 @@ function AlunoPaymentForm({
                   : "border-gray-200 hover:border-indigo-300 text-gray-700"
               }`}>
               <p className="font-semibold">{p.name}</p>
-              <p className="text-xs text-gray-400">{fmt(p.totalAmount)} · {p.installments}x · {p.durationMonths} {p.durationMonths === 1 ? "mês" : "meses"}</p>
+              <p className="text-xs text-gray-400">{fmt(p.totalAmount)} · {p.durationMonths} {p.durationMonths === 1 ? "mês" : "meses"}</p>
             </button>
           ))}
           <button onClick={() => { setSelectedPlanId(""); setCustomPlanName(""); }}
@@ -344,7 +342,7 @@ function AlunoPaymentForm({
         )}
         {plan && (
           <div className="mt-2 bg-indigo-50 border border-indigo-100 rounded-xl px-3 py-2 text-xs text-indigo-700">
-            <span className="font-bold">{plan.name}</span> — {fmt(plan.totalAmount)} em {plan.installments}x · {plan.durationMonths} meses
+            <span className="font-bold">{plan.name}</span> — {fmt(plan.totalAmount)} · {plan.durationMonths} meses
             {plan.description && <span className="text-indigo-500"> · {plan.description}</span>}
           </div>
         )}
@@ -472,74 +470,47 @@ function AlunoPaymentForm({
           </div>
         )}
 
-        {/* CARTÃO */}
+        {/* CARTÃO — taxa é do aluno, você recebe o total em 1 dia útil */}
         {negType === "card" && (
           <div className="space-y-3">
-            <div>
-              <label className="block text-[10px] font-semibold text-gray-500 mb-1">Valor total da venda (faturamento)</label>
-              <input type="number" step="0.01" value={grossValue}
-                onChange={e => setGrossValue(e.target.value)}
-                placeholder="R$" className={inputClsLocal}/>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[10px] font-semibold text-gray-500 mb-1">Valor total da venda</label>
+                <input type="number" step="0.01" value={grossValue}
+                  onChange={e => setGrossValue(e.target.value)}
+                  placeholder="R$" className={inputClsLocal}/>
+              </div>
+              <div>
+                <label className="block text-[10px] font-semibold text-gray-500 mb-1">Data da venda</label>
+                <input type="date" value={saleDate}
+                  onChange={e => { setSaleDate(e.target.value); setCashDate(nextBusinessDay(e.target.value)); }}
+                  className={inputClsLocal}/>
+              </div>
             </div>
 
-            <label className="flex items-center gap-2 cursor-pointer p-3 bg-amber-50 rounded-xl border border-amber-200">
-              <input type="checkbox" checked={anticipation} onChange={e => setAnticip(e.target.checked)}
-                className="accent-amber-500"/>
-              <div>
-                <span className="text-sm font-semibold text-amber-800">Antecipação de recebíveis</span>
-                <p className="text-[10px] text-amber-600">Recebi o valor adiantado com desconto da operadora</p>
-              </div>
-            </label>
-
-            {anticipation ? (
-              /* Antecipação: 1 entrada com valor líquido */
-              <div className="grid grid-cols-2 gap-2 p-3 bg-gray-50 rounded-xl border border-gray-200">
+            <div className="p-3 bg-blue-50 rounded-xl border border-blue-200">
+              <p className="text-xs font-semibold text-blue-700 mb-2">Entrada no caixa</p>
+              <div className="grid grid-cols-2 gap-2 items-end">
                 <div>
-                  <label className="block text-[10px] font-semibold text-gray-500 mb-1">Valor líquido recebido</label>
-                  <input type="number" step="0.01" value={netValue}
-                    onChange={e => setNetValue(e.target.value)}
-                    placeholder="R$" className={inputClsLocal}/>
-                  {grossValue && netValue && parseFloat(grossValue) > 0 && (
-                    <p className="text-[10px] text-gray-400 mt-0.5">
-                      Taxa: {(100 - (parseFloat(netValue) / parseFloat(grossValue) * 100)).toFixed(2)}%
-                    </p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-[10px] font-semibold text-gray-500 mb-1">Data entrada no caixa</label>
+                  <label className="block text-[10px] font-semibold text-gray-500 mb-1">Data de entrada no caixa</label>
                   <input type="date" value={cashFlowDate}
                     onChange={e => setCashDate(e.target.value)}
                     className={inputClsLocal}/>
                 </div>
-              </div>
-            ) : (
-              /* Sem antecipação: parcelas com datas livres */
-              <div>
-                <p className="text-[10px] font-semibold text-gray-500 mb-2">Parcelas do cliente (defina datas manualmente)</p>
-                <div className="space-y-2">
-                  {cardInstallments.map((inst, idx) => (
-                    <div key={idx} className="flex items-center gap-2 p-2 bg-gray-50 rounded-xl border border-gray-200">
-                      <div className="flex-1 min-w-0 grid grid-cols-[1fr_90px_100px] gap-2 items-center">
-                        <input value={inst.label} onChange={e => setCardInstallments(prev => prev.map((x, i) => i === idx ? { ...x, label: e.target.value } : x))}
-                          placeholder={`Parcela ${idx + 1}`} className={inputSmCls}/>
-                        <input type="number" step="0.01" value={inst.amount}
-                          onChange={e => setCardInstallments(prev => prev.map((x, i) => i === idx ? { ...x, amount: e.target.value } : x))}
-                          placeholder="R$" className={inputSmCls}/>
-                        <input type="date" value={inst.dueDate}
-                          onChange={e => setCardInstallments(prev => prev.map((x, i) => i === idx ? { ...x, dueDate: e.target.value } : x))}
-                          className={inputSmCls}/>
-                      </div>
-                      <button onClick={() => setCardInstallments(prev => prev.filter((_, i) => i !== idx))}
-                        className="text-gray-300 hover:text-red-400 shrink-0"><X className="w-3.5 h-3.5"/></button>
-                    </div>
-                  ))}
-                  <button onClick={() => setCardInstallments(prev => [...prev, { amount: "", dueDate: today, label: `Parcela ${prev.length + 1}` }])}
-                    className="flex items-center gap-1 text-xs text-indigo-600 hover:underline">
-                    <Plus className="w-3.5 h-3.5"/> Adicionar parcela
-                  </button>
+                <div>
+                  <p className="text-[10px] text-blue-600 leading-tight">
+                    Calculado automaticamente como 1 dia útil após a venda. Edite se necessário.
+                  </p>
                 </div>
               </div>
-            )}
+              {grossValue && parseFloat(grossValue) > 0 && (
+                <div className="mt-2 pt-2 border-t border-blue-200 flex items-center justify-between text-xs text-blue-700">
+                  <span>Valor que entra no caixa:</span>
+                  <span className="font-bold text-sm">{fmt(parseFloat(grossValue))}</span>
+                </div>
+              )}
+            </div>
+            <p className="text-[10px] text-gray-400">A taxa é repassada ao aluno — você recebe o valor total da venda.</p>
           </div>
         )}
       </div>
@@ -594,12 +565,18 @@ function AlunoPaymentForm({
               <p className="text-sm font-bold text-gray-700">{resumo.parcelas}x</p>
             </div>
           </div>
-          <div className="flex items-center gap-2 text-xs text-gray-500">
+          <div className="flex items-center gap-2 text-xs text-gray-500 flex-wrap">
             <span className="font-medium">{plan?.name || customPlanName || "Personalizado"}</span>
             <span>·</span>
             <span>{payMethod}</span>
             <span>·</span>
-            <span>{negType === "card" ? (anticipation ? "Cartão antecipado" : "Cartão parcelado") : negType === "pix" ? "PIX parcelado" : negType === "cash" ? "À vista" : "Personalizado"}</span>
+            <span>{negType === "card" ? "Cartão" : negType === "pix" ? "PIX parcelado" : negType === "cash" ? "À vista" : "Personalizado"}</span>
+            {resumo.cashDate && negType === "card" && (
+              <>
+                <span>·</span>
+                <span className="text-blue-600 font-medium">Caixa em {fmtDate(resumo.cashDate)}</span>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -692,7 +669,7 @@ function NovoAlunoModal({ onClose, onSave, plans }: { onClose: () => void; onSav
                         : "border-gray-200 hover:border-indigo-300 text-gray-700"
                     }`}>
                     <p className="font-semibold">{p.name}</p>
-                    <p className="text-xs text-gray-400">{fmt(p.totalAmount)} · {p.installments}x</p>
+                    <p className="text-xs text-gray-400">{fmt(p.totalAmount)} · {p.durationMonths} {p.durationMonths === 1 ? "mês" : "meses"}</p>
                   </button>
                 ))}
                 {SPECIAL_PLAN_OPTIONS.map(p => (

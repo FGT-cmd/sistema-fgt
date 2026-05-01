@@ -8,7 +8,7 @@ import {
   DollarSign,
   Users,
   FolderKanban,
-  MessageCircle,
+  Bot,
   Lightbulb,
   Calendar,
   Settings,
@@ -26,11 +26,10 @@ const primaryNav = [
 
 // Secondary modules
 const secondaryNav = [
-  { href: "/crm",        icon: FolderKanban,  label: "CRM" },
-  { href: "/agenda",     icon: Calendar,      label: "Agenda" },
-  { href: "/projetos",   icon: FolderOpen,    label: "Projetos" },
-  { href: "/whatsapp",   icon: MessageCircle, label: "WhatsApp" },
-  { href: "/openclaw",   icon: Lightbulb,     label: "OpenClaw" },
+  { href: "/crm",        icon: FolderKanban, label: "CRM" },
+  { href: "/agenda",     icon: Calendar,     label: "Agenda" },
+  { href: "/projetos",   icon: FolderOpen,   label: "Projetos" },
+  { href: "/openclaw",   icon: Bot,          label: "OpenClaw" },
 ];
 
 // Coming soon (greyed out, no href)

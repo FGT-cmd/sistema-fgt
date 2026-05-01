@@ -35,6 +35,7 @@ type Installment = {
   paidAt?: string | null;
   status: string;
   notes?: string | null;
+  label?: string | null;
 };
 
 type Sale = {
@@ -709,6 +710,9 @@ function Faturamento({ txs, sales, clients, onToggle, onDelete, onAddTx, onAddSa
 }
 
 // ─── Tab: Parcelas a Receber ──────────────────────────────────────
+// ─── Tipo de filtro de parcelas ───────────────────────────────────
+type ParcelaFilter = "todas" | "a_vencer" | "hoje" | "vencidas" | "pagas";
+
 function ParcelasReceber({ sales, clients, onToggleParcela, onAddSale, onDeleteSale }: {
   sales: Sale[];
   clients: Client[];
@@ -717,156 +721,164 @@ function ParcelasReceber({ sales, clients, onToggleParcela, onAddSale, onDeleteS
   onDeleteSale: (saleId: string) => void;
 }) {
   const [showModal, setShowModal] = useState(false);
-  const [filter, setFilter] = useState<"todas"|"pendente"|"pago">("todas");
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [filter, setFilter] = useState<ParcelaFilter>("todas");
 
-  function toggleExpand(id: string) {
-    setExpanded(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
-  }
+  const now = new Date();
+  const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
+  const todayEnd   = new Date(now); todayEnd.setHours(23, 59, 59, 999);
 
-  const allInstallments = sales.flatMap(s => s.installments);
-  const totalAReceber = allInstallments.filter(i => i.status !== "pago").reduce((s,i) => s+i.amount, 0);
-  const totalRecebido = allInstallments.filter(i => i.status === "pago").reduce((s,i) => s+i.amount, 0);
-  const vencidas = allInstallments.filter(i => i.status !== "pago" && new Date(i.dueDate) < new Date());
+  // Lista plana de todas as parcelas com referência à venda/cliente
+  type FlatInst = Installment & { sale: Sale };
+  const allFlat: FlatInst[] = sales.flatMap(s =>
+    s.installments.map(i => ({ ...i, sale: s }))
+  ).sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
 
-  const filteredSales = filter === "todas" ? sales
-    : filter === "pendente" ? sales.filter(s => s.installments.some(i => i.status !== "pago"))
-    : sales.filter(s => s.installments.every(i => i.status === "pago"));
+  // Totais para KPIs
+  const totalAReceber  = allFlat.filter(i => i.status !== "pago").reduce((s, i) => s + i.amount, 0);
+  const totalVencidas  = allFlat.filter(i => i.status !== "pago" && new Date(i.dueDate) < todayStart).reduce((s, i) => s + i.amount, 0);
+  const countVencidas  = allFlat.filter(i => i.status !== "pago" && new Date(i.dueDate) < todayStart).length;
+  const totalRecebido  = allFlat.filter(i => i.status === "pago").reduce((s, i) => s + i.amount, 0);
+  const countHoje      = allFlat.filter(i => i.status !== "pago" && new Date(i.dueDate) >= todayStart && new Date(i.dueDate) <= todayEnd).length;
+
+  // Filtro aplicado
+  const filteredFlat = allFlat.filter(i => {
+    const d = new Date(i.dueDate);
+    if (filter === "pagas")    return i.status === "pago";
+    if (filter === "vencidas") return i.status !== "pago" && d < todayStart;
+    if (filter === "hoje")     return i.status !== "pago" && d >= todayStart && d <= todayEnd;
+    if (filter === "a_vencer") return i.status !== "pago" && d > todayEnd;
+    return true; // todas
+  });
+
+  const FILTERS: { key: ParcelaFilter; label: string; count?: number }[] = [
+    { key: "todas",    label: "Todas" },
+    { key: "vencidas", label: "Vencidas", count: countVencidas },
+    { key: "hoje",     label: "Hoje",     count: countHoje },
+    { key: "a_vencer", label: "A Vencer" },
+    { key: "pagas",    label: "Pagas" },
+  ];
 
   return (
     <div>
-      {/* Summary */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      {/* KPIs */}
+      <div className="grid grid-cols-3 gap-4 mb-5">
         <div className="bg-white rounded-xl border border-amber-100 shadow-sm p-4">
-          <div className="flex items-center gap-2 mb-1">
-            <Clock className="w-4 h-4 text-amber-500"/>
-            <span className="text-xs text-gray-500">A Receber</span>
-          </div>
+          <p className="text-[10px] text-amber-500 font-bold uppercase mb-1">A Receber</p>
           <p className="text-xl font-bold text-amber-600">{fmt(totalAReceber)}</p>
-          <p className="text-xs text-gray-400 mt-0.5">{allInstallments.filter(i=>i.status!=="pago").length} parcelas</p>
+          <p className="text-xs text-gray-400 mt-0.5">{allFlat.filter(i=>i.status!=="pago").length} parcelas</p>
         </div>
         <div className="bg-white rounded-xl border border-red-100 shadow-sm p-4">
-          <div className="flex items-center gap-2 mb-1">
-            <AlertCircle className="w-4 h-4 text-red-500"/>
-            <span className="text-xs text-gray-500">Vencidas</span>
-          </div>
-          <p className="text-xl font-bold text-red-600">{fmt(vencidas.reduce((s,i)=>s+i.amount,0))}</p>
-          <p className="text-xs text-gray-400 mt-0.5">{vencidas.length} parcelas</p>
+          <p className="text-[10px] text-red-500 font-bold uppercase mb-1">Vencidas</p>
+          <p className="text-xl font-bold text-red-600">{fmt(totalVencidas)}</p>
+          <p className="text-xs text-gray-400 mt-0.5">{countVencidas} parcelas</p>
         </div>
         <div className="bg-white rounded-xl border border-green-100 shadow-sm p-4">
-          <div className="flex items-center gap-2 mb-1">
-            <CheckCircle2 className="w-4 h-4 text-green-500"/>
-            <span className="text-xs text-gray-500">Recebido</span>
-          </div>
+          <p className="text-[10px] text-green-500 font-bold uppercase mb-1">Recebido</p>
           <p className="text-xl font-bold text-green-600">{fmt(totalRecebido)}</p>
-          <p className="text-xs text-gray-400 mt-0.5">{allInstallments.filter(i=>i.status==="pago").length} parcelas</p>
+          <p className="text-xs text-gray-400 mt-0.5">{allFlat.filter(i=>i.status==="pago").length} parcelas</p>
         </div>
       </div>
 
       {/* Toolbar */}
       <div className="flex items-center justify-between mb-4">
-        <div className="flex gap-1">
-          {(["pendente","pago","todas"] as const).map(f => (
-            <button key={f} onClick={() => setFilter(f)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${filter===f ? "text-white" : "bg-white text-gray-500 border border-gray-200 hover:bg-gray-50"}`}
-              style={filter===f ? {background:"#6366f1"} : {}}>
-              {f==="pendente"?"Pendentes":f==="pago"?"Quitadas":"Todas"}
+        <div className="flex gap-1 flex-wrap">
+          {FILTERS.map(f => (
+            <button key={f.key} onClick={() => setFilter(f.key)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1 ${filter===f.key ? "text-white" : "bg-white text-gray-500 border border-gray-200 hover:bg-gray-50"}`}
+              style={filter===f.key ? {background:"#6366f1"} : {}}>
+              {f.label}
+              {f.count !== undefined && f.count > 0 && (
+                <span className={`text-[10px] rounded-full px-1.5 py-0.5 font-bold ${filter===f.key ? "bg-white/20 text-white" : f.key==="vencidas" ? "bg-red-100 text-red-600" : "bg-amber-100 text-amber-600"}`}>
+                  {f.count}
+                </span>
+              )}
             </button>
           ))}
         </div>
         <button onClick={() => setShowModal(true)}
           className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white shadow-sm"
           style={{background:"#6366f1"}}>
-          <Plus className="w-4 h-4"/> Nova Venda Parcelada
+          <Plus className="w-4 h-4"/> Nova Venda
         </button>
       </div>
 
-      {/* Sales list */}
-      <div className="space-y-3">
-        {filteredSales.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-gray-100 p-16 text-center text-gray-400 text-sm">
-            Nenhuma venda encontrada
-          </div>
-        ) : filteredSales.map(sale => {
-          const paidCount = sale.installments.filter(i => i.status === "pago").length;
-          const progress = sale.installmentsCount > 0 ? (paidCount / sale.installmentsCount) * 100 : 0;
-          const isExpanded = expanded.has(sale.id);
-          const paidAmount = sale.installments.filter(i=>i.status==="pago").reduce((s,i)=>s+i.amount,0);
-
-          return (
-            <div key={sale.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-              {/* Sale header */}
-              <div className="flex items-center gap-4 px-5 py-4 cursor-pointer hover:bg-gray-50/60 transition-colors"
-                onClick={() => toggleExpand(sale.id)}>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-0.5">
-                    <p className="font-semibold text-gray-800 truncate">{sale.description}</p>
-                    {sale.negotiationNotes && (
-                      <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full hidden sm:inline">nota</span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3 text-xs text-gray-400">
-                    <span className="font-medium text-indigo-600">{sale.client.name}</span>
-                    <span>·</span>
-                    <span>{sale.installmentsCount}x {fmt(sale.totalAmount/sale.installmentsCount)}</span>
-                    <span>·</span>
-                    <span>{sale.paymentMethod || "—"}</span>
-                    <span>·</span>
-                    <span>{fmtDate(sale.createdAt)}</span>
-                  </div>
-                </div>
-                <div className="text-right shrink-0">
-                  <p className="text-xs text-gray-400 mb-1">{paidCount}/{sale.installmentsCount} pagas</p>
-                  <div className="w-32 bg-gray-100 rounded-full h-1.5 mb-1">
-                    <div className="h-1.5 rounded-full transition-all" style={{width:`${progress}%`, background:"#6366f1"}}/>
-                  </div>
-                  <p className="text-xs font-semibold text-green-600">{fmt(paidAmount)} <span className="text-gray-300">/ {fmt(sale.totalAmount)}</span></p>
-                </div>
-                <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform shrink-0 ${isExpanded ? "rotate-180" : ""}`}/>
-                <button
-                  onClick={e => { e.stopPropagation(); if (confirm(`Remover venda "${sale.description}" e todas as parcelas?`)) onDeleteSale(sale.id); }}
-                  className="p-1.5 rounded-lg hover:bg-red-50 text-gray-300 hover:text-red-400 transition-colors shrink-0">
-                  <Trash2 className="w-4 h-4"/>
-                </button>
-              </div>
-
-              {/* Installments grid */}
-              {isExpanded && (
-                <div className="border-t border-gray-100 px-5 py-4">
-                  {sale.negotiationNotes && (
-                    <p className="text-xs text-gray-500 bg-blue-50 rounded-lg px-3 py-2 mb-4 italic">💬 {sale.negotiationNotes}</p>
-                  )}
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
-                    {sale.installments.map(inst => {
-                      const paid = inst.status === "pago";
-                      const over = isOverdue(inst.status, inst.dueDate);
-                      return (
-                        <button key={inst.id}
-                          onClick={() => onToggleParcela(sale.id, inst.id, paid ? "pendente" : "pago")}
-                          className={`rounded-xl p-3 text-center border transition-all hover:scale-105 ${
-                            paid ? "bg-green-50 border-green-200 hover:bg-green-100"
-                            : over ? "bg-red-50 border-red-200 hover:bg-red-100"
-                            : "bg-gray-50 border-gray-200 hover:bg-indigo-50 hover:border-indigo-200"
-                          }`}>
-                          <p className="text-[10px] font-bold text-gray-500 mb-1">Parcela {inst.number}</p>
-                          <p className="text-sm font-bold" style={{color: paid?"#16a34a":over?"#dc2626":"#374151"}}>
-                            {fmt(inst.amount)}
-                          </p>
-                          <p className="text-[10px] mt-1" style={{color: paid?"#16a34a":over?"#dc2626":"#9ca3af"}}>
-                            {fmtShort(inst.dueDate)}
-                          </p>
-                          {paid && <Check className="w-3 h-3 text-green-500 mx-auto mt-1"/>}
-                          {over && !paid && <AlertCircle className="w-3 h-3 text-red-500 mx-auto mt-1"/>}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      {/* Tabela plana de parcelas */}
+      {filteredFlat.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-gray-100 p-16 text-center text-gray-400 text-sm">
+          <CheckCircle2 className="w-8 h-8 mx-auto mb-2 text-gray-200"/>
+          Nenhuma parcela encontrada para este filtro
+        </div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-100 bg-gray-50">
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase">Aluno</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase hidden md:table-cell">Negociação</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase">Parcela</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase">Vencimento</th>
+                <th className="px-4 py-3 text-center text-xs font-semibold text-gray-400 uppercase">Status</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-400 uppercase">Valor</th>
+                <th className="w-10"/>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredFlat.map(inst => {
+                const paid = inst.status === "pago";
+                const over = !paid && new Date(inst.dueDate) < todayStart;
+                const isToday = !paid && new Date(inst.dueDate) >= todayStart && new Date(inst.dueDate) <= todayEnd;
+                const days = over ? Math.floor((now.getTime() - new Date(inst.dueDate).getTime()) / (1000*60*60*24)) : 0;
+                return (
+                  <tr key={inst.id} className={`border-t border-gray-50 hover:bg-gray-50/60 group ${over ? "bg-red-50/30" : isToday ? "bg-amber-50/30" : ""}`}>
+                    <td className="px-4 py-3">
+                      <p className="font-medium text-gray-800">{inst.sale.client.name}</p>
+                    </td>
+                    <td className="px-4 py-3 hidden md:table-cell">
+                      <p className="text-xs text-gray-500 truncate max-w-[160px]">{inst.sale.description}</p>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="text-xs text-gray-500">{inst.label || `${inst.number}ª`}</span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <p className={`text-sm font-medium ${over ? "text-red-600" : isToday ? "text-amber-600" : "text-gray-600"}`}>
+                        {fmtDate(inst.dueDate)}
+                      </p>
+                      {over && <p className="text-[10px] text-red-400">{days}d atraso</p>}
+                      {isToday && <p className="text-[10px] text-amber-500">vence hoje</p>}
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                        paid ? "bg-green-100 text-green-700"
+                        : over ? "bg-red-100 text-red-600"
+                        : isToday ? "bg-amber-100 text-amber-700"
+                        : "bg-gray-100 text-gray-500"
+                      }`}>
+                        {paid ? "PAGO" : over ? "VENCIDA" : isToday ? "HOJE" : "A VENCER"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <span className={`text-sm font-bold ${paid ? "text-green-600" : over ? "text-red-600" : "text-gray-700"}`}>
+                        {fmt(inst.amount)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <button
+                        onClick={() => onToggleParcela(inst.sale.id, inst.id, paid ? "pendente" : "pago")}
+                        title={paid ? "Desmarcar" : "Marcar como pago"}
+                        className={`opacity-0 group-hover:opacity-100 p-1.5 rounded-lg transition-all text-xs font-medium ${
+                          paid ? "text-gray-400 hover:text-amber-600 hover:bg-amber-50"
+                          : "text-indigo-500 hover:bg-indigo-50"
+                        }`}>
+                        <Check className="w-4 h-4"/>
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {showModal && (
         <NovaVendaModal clients={clients} onClose={() => setShowModal(false)}
@@ -1472,141 +1484,173 @@ export default function FinanceiroPage() {
               <ParcelasReceber sales={sales} clients={clients}
                 onToggleParcela={toggleParcela} onAddSale={addSale} onDeleteSale={deleteSale}/>
             )}
-            {tab === "alertas" && (
-              <div className="max-w-2xl space-y-5">
+            {tab === "alertas" && (() => {
+              // Agrupa vencidas + hoje por cliente para visão operacional
+              type CobrancaCliente = {
+                id: string; name: string;
+                overdueCount: number; todayCount: number;
+                overdueTotal: number; todayTotal: number;
+                oldestDueDate: string; maxDaysOverdue: number;
+              };
+              const cobrancaMap = new Map<string, CobrancaCliente>();
 
-                {/* Vencidas */}
-                {alerts && alerts.overdueInstallments.length > 0 && (
-                  <div className="bg-white rounded-2xl border border-red-100 shadow-sm overflow-hidden">
-                    <div className="flex items-center justify-between px-5 py-3 border-b border-red-50 bg-red-50">
-                      <h3 className="text-sm font-bold text-red-700 flex items-center gap-2">
-                        <AlertCircle className="w-4 h-4"/> Parcelas vencidas
-                        <span className="bg-red-100 text-red-700 text-xs rounded-full px-2 py-0.5">{alerts.overdueInstallments.length}</span>
-                      </h3>
-                      {alerts.counts.overdue > 0 && (
-                        <button onClick={handleCreateCollectionTasks} disabled={creatingTasks}
-                          className="text-xs text-indigo-600 hover:underline flex items-center gap-1 disabled:opacity-50">
-                          {creatingTasks ? <Loader2 className="w-3 h-3 animate-spin"/> : <Users className="w-3 h-3"/>}
-                          Criar tarefas de cobrança
-                        </button>
-                      )}
-                    </div>
-                    <div className="divide-y divide-red-50">
-                      {alerts.overdueInstallments.map((inst) => {
-                        const days = Math.floor((Date.now() - new Date(inst.dueDate).getTime()) / (1000*60*60*24));
-                        return (
-                          <div key={inst.id} className="flex items-center justify-between px-5 py-3">
-                            <div>
-                              <p className="text-sm font-medium text-gray-800">{inst.sale.client.name}</p>
-                              <p className="text-xs text-red-500">{days} dia{days !== 1 ? "s" : ""} de atraso · {fmtDate(inst.dueDate)}</p>
+              if (alerts) {
+                const now2 = new Date();
+                for (const inst of [...alerts.overdueInstallments, ...alerts.todayInstallments]) {
+                  const { id, name } = inst.sale.client;
+                  const existing = cobrancaMap.get(id) ?? {
+                    id, name, overdueCount: 0, todayCount: 0,
+                    overdueTotal: 0, todayTotal: 0,
+                    oldestDueDate: inst.dueDate, maxDaysOverdue: 0,
+                  };
+                  const isOverdueInst = new Date(inst.dueDate) < new Date(now2.toISOString().slice(0,10) + "T00:00:00");
+                  if (isOverdueInst) {
+                    existing.overdueCount++;
+                    existing.overdueTotal += inst.amount;
+                    const days = Math.floor((now2.getTime() - new Date(inst.dueDate).getTime()) / (1000*60*60*24));
+                    if (days > existing.maxDaysOverdue) {
+                      existing.maxDaysOverdue = days;
+                      existing.oldestDueDate = inst.dueDate;
+                    }
+                  } else {
+                    existing.todayCount++;
+                    existing.todayTotal += inst.amount;
+                  }
+                  cobrancaMap.set(id, existing);
+                }
+              }
+              const cobrancaList = Array.from(cobrancaMap.values())
+                .sort((a, b) => b.maxDaysOverdue - a.maxDaysOverdue || b.overdueTotal - a.overdueTotal);
+
+              return (
+                <div className="max-w-2xl space-y-5">
+                  {/* Fila de cobranças — agrupada por cliente */}
+                  {cobrancaList.length > 0 ? (
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-sm font-bold text-gray-700">
+                          Fila de cobrança
+                          <span className="ml-2 text-xs font-normal text-gray-400">ordenada por urgência</span>
+                        </h3>
+                        {alerts && alerts.counts.overdue > 0 && (
+                          <button onClick={handleCreateCollectionTasks} disabled={creatingTasks}
+                            className="flex items-center gap-1.5 text-xs font-medium text-indigo-600 hover:underline disabled:opacity-50">
+                            {creatingTasks ? <Loader2 className="w-3 h-3 animate-spin"/> : <Users className="w-3 h-3"/>}
+                            Gerar tarefas de cobrança
+                          </button>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        {cobrancaList.map(c => (
+                          <div key={c.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex-1 min-w-0">
+                                <p className="font-semibold text-gray-800">{c.name}</p>
+                                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                  {c.overdueCount > 0 && (
+                                    <span className="text-xs bg-red-100 text-red-700 rounded-full px-2 py-0.5 font-medium">
+                                      {c.overdueCount} vencida{c.overdueCount > 1 ? "s" : ""} · {c.maxDaysOverdue}d atraso
+                                    </span>
+                                  )}
+                                  {c.todayCount > 0 && (
+                                    <span className="text-xs bg-amber-100 text-amber-700 rounded-full px-2 py-0.5 font-medium">
+                                      {c.todayCount} vence hoje
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <p className="text-base font-bold text-red-600">
+                                  {fmt(c.overdueTotal + c.todayTotal)}
+                                </p>
+                                <p className="text-[10px] text-gray-400">total pendente crítico</p>
+                              </div>
                             </div>
-                            <span className="text-base font-bold text-red-700">{fmt(inst.amount)}</span>
                           </div>
-                        );
-                      })}
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-12 text-gray-400">
+                      <CheckCircle2 className="w-10 h-10 mb-2 text-green-300"/>
+                      <p className="text-sm font-medium">Nenhuma cobrança urgente.</p>
+                      <p className="text-xs mt-1">Todas as parcelas vencidas estão em dia.</p>
+                    </div>
+                  )}
 
-                {/* Vencem hoje */}
-                {alerts && alerts.todayInstallments.length > 0 && (
-                  <div className="bg-white rounded-2xl border border-amber-100 shadow-sm overflow-hidden">
-                    <div className="px-5 py-3 border-b border-amber-50 bg-amber-50">
-                      <h3 className="text-sm font-bold text-amber-700 flex items-center gap-2">
-                        <Clock className="w-4 h-4"/> Vencem hoje
-                        <span className="bg-amber-100 text-amber-700 text-xs rounded-full px-2 py-0.5">{alerts.todayInstallments.length}</span>
-                      </h3>
-                    </div>
-                    <div className="divide-y divide-amber-50">
-                      {alerts.todayInstallments.map((inst) => (
-                        <div key={inst.id} className="flex items-center justify-between px-5 py-3">
-                          <p className="text-sm font-medium text-gray-800">{inst.sale.client.name}</p>
-                          <span className="text-base font-bold text-amber-700">{fmt(inst.amount)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Vencem esta semana */}
-                {weekInstallments.length > 0 && (
-                  <div className="bg-white rounded-2xl border border-blue-100 shadow-sm overflow-hidden">
-                    <div className="px-5 py-3 border-b border-blue-50 bg-blue-50">
-                      <h3 className="text-sm font-bold text-blue-700 flex items-center gap-2">
-                        <Calendar className="w-4 h-4"/> Vencem esta semana
-                        <span className="bg-blue-100 text-blue-700 text-xs rounded-full px-2 py-0.5">{weekInstallments.length}</span>
-                      </h3>
-                    </div>
-                    <div className="divide-y divide-blue-50">
-                      {weekInstallments.map((inst) => {
-                        const d = new Date(inst.dueDate);
-                        const diff = Math.round((d.getTime() - _todayEnd.getTime()) / (1000*60*60*24));
-                        const label = diff === 1 ? "amanhã" : d.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "2-digit" });
-                        return (
-                          <div key={inst.id} className="flex items-center justify-between px-5 py-3">
-                            <div>
-                              <p className="text-sm font-medium text-gray-800">{inst.clientName}</p>
-                              <p className="text-xs text-blue-500 capitalize">{label}</p>
+                  {/* Vencem esta semana — informativo */}
+                  {weekInstallments.length > 0 && (
+                    <div className="bg-white rounded-2xl border border-blue-100 shadow-sm overflow-hidden">
+                      <div className="px-5 py-3 border-b border-blue-50 bg-blue-50 flex items-center justify-between">
+                        <h3 className="text-sm font-bold text-blue-700 flex items-center gap-2">
+                          <Calendar className="w-4 h-4"/> Vencem esta semana
+                          <span className="bg-blue-100 text-blue-700 text-xs rounded-full px-2 py-0.5">{weekInstallments.length}</span>
+                        </h3>
+                        <span className="text-xs text-blue-500">{fmt(weekInstallments.reduce((s,i)=>s+i.amount,0))}</span>
+                      </div>
+                      <div className="divide-y divide-blue-50">
+                        {weekInstallments.map((inst) => {
+                          const d = new Date(inst.dueDate);
+                          const diff = Math.round((d.getTime() - _todayEnd.getTime()) / (1000*60*60*24));
+                          const label = diff === 1 ? "amanhã" : d.toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" });
+                          return (
+                            <div key={inst.id} className="flex items-center justify-between px-5 py-2.5">
+                              <div>
+                                <p className="text-sm font-medium text-gray-800">{inst.clientName}</p>
+                                <p className="text-xs text-blue-500 capitalize">{label}</p>
+                              </div>
+                              <span className="text-sm font-bold text-blue-700">{fmt(inst.amount)}</span>
                             </div>
-                            <span className="text-base font-bold text-blue-700">{fmt(inst.amount)}</span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Renovações próximas */}
+                  {alerts && alerts.endingSoon.length > 0 && (
+                    <div className="bg-white rounded-2xl border border-purple-100 shadow-sm overflow-hidden">
+                      <div className="px-5 py-3 border-b border-purple-50 bg-purple-50">
+                        <h3 className="text-sm font-bold text-purple-700 flex items-center gap-2">
+                          <RefreshCw className="w-4 h-4"/> Renovações próximas
+                          <span className="bg-purple-100 text-purple-700 text-xs rounded-full px-2 py-0.5">{alerts.endingSoon.length}</span>
+                        </h3>
+                      </div>
+                      <div className="divide-y divide-purple-50">
+                        {alerts.endingSoon.map((s) => (
+                          <div key={s.saleId} className="flex items-center justify-between px-5 py-3">
+                            <div>
+                              <p className="text-sm font-medium text-gray-800">{s.client.name}</p>
+                              <p className="text-xs text-purple-500">Encerra em {fmtDate(s.lastDueDate)}</p>
+                            </div>
+                            <span className="text-xs font-semibold text-purple-600 bg-purple-50 border border-purple-200 rounded-lg px-3 py-1">Renovar</span>
                           </div>
-                        );
-                      })}
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {/* Renovações próximas */}
-                {alerts && alerts.endingSoon.length > 0 && (
-                  <div className="bg-white rounded-2xl border border-purple-100 shadow-sm overflow-hidden">
-                    <div className="px-5 py-3 border-b border-purple-50 bg-purple-50">
-                      <h3 className="text-sm font-bold text-purple-700 flex items-center gap-2">
-                        <RefreshCw className="w-4 h-4"/> Renovações próximas (30 dias)
-                        <span className="bg-purple-100 text-purple-700 text-xs rounded-full px-2 py-0.5">{alerts.endingSoon.length}</span>
-                      </h3>
+                  {/* Sem pagamento recente */}
+                  {alerts && alerts.noRecentPayment.length > 0 && (
+                    <div className="bg-white rounded-2xl border border-orange-100 shadow-sm overflow-hidden">
+                      <div className="px-5 py-3 border-b border-orange-50 bg-orange-50">
+                        <h3 className="text-sm font-bold text-orange-700 flex items-center gap-2">
+                          <Users className="w-4 h-4"/> Sem pagamento — 60 dias
+                          <span className="bg-orange-100 text-orange-700 text-xs rounded-full px-2 py-0.5">{alerts.noRecentPayment.length}</span>
+                        </h3>
+                      </div>
+                      <div className="px-5 py-3 flex flex-wrap gap-2">
+                        {alerts.noRecentPayment.map((c) => (
+                          <span key={c.id} className="text-sm bg-orange-50 border border-orange-200 text-orange-700 rounded-xl px-3 py-1.5 font-medium">
+                            {c.name}
+                          </span>
+                        ))}
+                      </div>
                     </div>
-                    <div className="divide-y divide-purple-50">
-                      {alerts.endingSoon.map((s) => (
-                        <div key={s.saleId} className="flex items-center justify-between px-5 py-3">
-                          <div>
-                            <p className="text-sm font-medium text-gray-800">{s.client.name}</p>
-                            <p className="text-xs text-purple-500">Plano encerra em {fmtDate(s.lastDueDate)}</p>
-                          </div>
-                          <span className="text-xs font-semibold text-purple-600 bg-purple-50 border border-purple-200 rounded-lg px-3 py-1">Renovar?</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Sem pagamento recente */}
-                {alerts && alerts.noRecentPayment.length > 0 && (
-                  <div className="bg-white rounded-2xl border border-orange-100 shadow-sm overflow-hidden">
-                    <div className="px-5 py-3 border-b border-orange-50 bg-orange-50">
-                      <h3 className="text-sm font-bold text-orange-700 flex items-center gap-2">
-                        <Users className="w-4 h-4"/> Ativos sem pagamento nos últimos 60 dias
-                        <span className="bg-orange-100 text-orange-700 text-xs rounded-full px-2 py-0.5">{alerts.noRecentPayment.length}</span>
-                      </h3>
-                    </div>
-                    <div className="px-5 py-3 flex flex-wrap gap-2">
-                      {alerts.noRecentPayment.map((c) => (
-                        <span key={c.id} className="text-sm bg-orange-50 border border-orange-200 text-orange-700 rounded-xl px-3 py-1.5 font-medium">
-                          {c.name}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {(!alerts || (alerts.overdueInstallments.length === 0 && alerts.todayInstallments.length === 0 && weekInstallments.length === 0 && alerts.endingSoon.length === 0 && alerts.noRecentPayment.length === 0)) && (
-                  <div className="flex flex-col items-center justify-center py-20 text-gray-400">
-                    <CheckCircle2 className="w-10 h-10 mb-2 text-green-300"/>
-                    <p className="text-sm font-medium">Nenhum alerta financeiro no momento.</p>
-                    <p className="text-xs mt-1">Todas as parcelas estão em dia.</p>
-                  </div>
-                )}
-              </div>
-            )}
+                  )}
+                </div>
+              );
+            })()}
           </>
         )}
       </div>

@@ -44,7 +44,14 @@ const TYPES = [
   { id: "student",        label: "Aluno" },
   { id: "financial",      label: "Financeiro" },
   { id: "content",        label: "Conteúdo" },
+  { id: "commercial",     label: "Comercial" },
   { id: "administrative", label: "Administrativo" },
+];
+
+const SOURCES = [
+  { id: "manual",    label: "Manual" },
+  { id: "whatsapp",  label: "WhatsApp" },
+  { id: "automatic", label: "Automática" },
 ];
 
 const TYPE_COLORS: Record<string, string> = {
@@ -52,6 +59,7 @@ const TYPE_COLORS: Record<string, string> = {
   student:        "#10b981",
   financial:      "#f59e0b",
   content:        "#3b82f6",
+  commercial:     "#ec4899",
   administrative: "#8b5cf6",
 };
 
@@ -60,6 +68,7 @@ const TYPE_BG: Record<string, string> = {
   student:        "#f0fdf4",
   financial:      "#fffbeb",
   content:        "#eff6ff",
+  commercial:     "#fdf2f8",
   administrative: "#f5f3ff",
 };
 
@@ -998,7 +1007,7 @@ export default function TarefasPage() {
   const [quickAddTitle,   setQuickAddTitle]   = useState("");
   const [showGlobalAdd,   setShowGlobalAdd]   = useState(false);
   const [globalForm,      setGlobalForm]      = useState({
-    title: "", description: "", dueDate: "", type: "general", clientId: "",
+    title: "", description: "", dueDate: "", type: "general", clientId: "", source: "manual",
   });
   const [saving, setSaving] = useState(false);
 
@@ -1136,12 +1145,13 @@ export default function TarefasPage() {
         description: globalForm.description || null,
         dueDate: globalForm.dueDate || null,
         type: globalForm.type,
+        source: globalForm.source,
         clientId: globalForm.clientId || null,
       }),
     });
     const task = await res.json();
     setTasks((prev) => [...prev, task]);
-    setGlobalForm({ title: "", description: "", dueDate: "", type: "general", clientId: "" });
+    setGlobalForm({ title: "", description: "", dueDate: "", type: "general", clientId: "", source: "manual" });
     setShowGlobalAdd(false);
     setSaving(false);
   }
@@ -1305,6 +1315,18 @@ export default function TarefasPage() {
                     ))}
                   </select>
                 </div>
+              </div>
+              <div>
+                <label className="text-xs text-gray-500 mb-1 block">Origem</label>
+                <select
+                  value={globalForm.source}
+                  onChange={(e) => setGlobalForm((f) => ({ ...f, source: e.target.value }))}
+                  className={inputCls}
+                >
+                  {SOURCES.map((s) => (
+                    <option key={s.id} value={s.id}>{s.label}</option>
+                  ))}
+                </select>
               </div>
             </div>
             <div className="flex gap-3 mt-5">

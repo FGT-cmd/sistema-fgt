@@ -5,13 +5,30 @@ import * as XLSX from "xlsx";
 import {
   Plus, Search, X, Trash2, Phone, Mail, Users, CheckCircle2,
   AlertTriangle, ChevronRight, DollarSign, Edit2, Save, Upload,
-  ExternalLink, FileText, Filter, Download, RefreshCw,
+  ExternalLink, FileText, Filter, Download, RefreshCw, RefreshCcw, ChevronDown,
+  MessageSquare, Check, Circle, Zap, Star, ArrowRight, ListChecks,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────
-type Installment = { id: string; status: string; dueDate: string; amount: number; number: number };
-type Sale = { id: string; description: string; totalAmount: number; installmentsCount: number; paymentMethod?: string | null; installments: Installment[] };
+type ServicePlan = {
+  id: string; name: string; description?: string | null;
+  totalAmount: number; installments: number; durationMonths: number; active: boolean;
+};
+type InstallmentDraft = { amount: string; dueDate: string; label: string; netValue?: string; paid?: boolean };
+type NegotiationType = "cash" | "pix" | "card" | "custom";
+type Installment = { id: string; status: string; dueDate: string; paidAt?: string | null; amount: number; number: number; label?: string | null; netValue?: number | null };
+type Sale = {
+  id: string; description: string; totalAmount: number; installmentsCount: number;
+  paymentMethod?: string | null; negotiationType?: string | null;
+  grossValue?: number | null; netValue?: number | null; cashFlowDate?: string | null;
+  servicePlanId?: string | null; installments: Installment[];
+};
 type StudentFile = { id: string; name: string; url: string; category: string; fileType: string };
+type ClientTask = {
+  id: string; title: string; status: string; type: string;
+  dueDate: string | null; urgent: boolean | null; important: boolean | null;
+};
+type Observacao = { id: string; type: string; content: string; date: string };
 type Aluno = {
   id: string; name: string; email?: string | null; phone?: string | null;
   notes?: string | null; status: string; source?: string | null;
@@ -28,18 +45,21 @@ const STATUS_OPTIONS = [
   { value: "lead",    label: "Lead",    color: "bg-blue-100 text-blue-600" },
   { value: "pausado", label: "Pausado", color: "bg-amber-100 text-amber-600" },
 ];
-const PLAN_OPTIONS = [
-  { value: "Trimestral",      label: "Trimestral",       details: false },
-  { value: "Semestral",       label: "Semestral",        details: false },
-  { value: "Anual",           label: "Anual",            details: false },
-  { value: "Personalizado",   label: "Personalizado",    details: true  },
-  { value: "Parceria/Collab", label: "Parceria / Collab", details: true },
+// Planos especiais sem preço fixo (sem plano cadastrado)
+const SPECIAL_PLAN_OPTIONS = [
+  { value: "Personalizado",   label: "Personalizado / Collab" },
+  { value: "Parceria/Collab", label: "Parceria sem cobrança" },
 ];
 const FUNIL_OPTIONS = ["Instagram", "Indicação", "WhatsApp", "TikTok", "Google", "Site", "Evento", "Outro"];
 const PAYMENT_METHODS = ["Pix", "Débito", "Crédito", "Transferência", "Boleto", "Dinheiro"];
+const NEG_TYPES: { value: NegotiationType; label: string; desc: string }[] = [
+  { value: "cash",   label: "À vista",        desc: "Pagamento único numa data" },
+  { value: "pix",    label: "PIX parcelado",   desc: "Parcelas independentes via PIX" },
+  { value: "card",   label: "Cartão",          desc: "Crédito com ou sem antecipação" },
+  { value: "custom", label: "Personalizado",   desc: "Datas e valores completamente livres" },
+];
 
 function statusCfg(s: string) { return STATUS_OPTIONS.find(o => o.value === s) || STATUS_OPTIONS[0]; }
-function planNeedsDetails(p: string) { return PLAN_OPTIONS.find(o => o.value === p)?.details ?? false; }
 function getInitials(n: string) { return n.split(" ").slice(0, 2).map(x => x[0]).join("").toUpperCase(); }
 function fmt(v: number) { return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v); }
 function fmtDate(d?: string | null) {
@@ -55,23 +75,485 @@ function totalPendente(a: Aluno) { return a.sales.flatMap(s => s.installments).f
 
 const inputCls = "w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white";
 
-// ─── PlanDetailsCard ──────────────────────────────────────────────
-function PlanDetailsCard({ planName, value, set }: { planName: string; value: string; set: (v: string) => void }) {
-  if (!planNeedsDetails(planName)) return null;
+// ─── AlunoPaymentForm ──────────────────────────────────────────────
+function AlunoPaymentForm({
+  aluno, plans, onSaved, onCancel,
+}: {
+  aluno: Aluno;
+  plans: ServicePlan[];
+  onSaved: (sale: Sale) => void;
+  onCancel: () => void;
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [saving, setSaving] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [aiSummary, setAiSummary] = useState("");
+
+  // Plano selecionado
+  const [selectedPlanId, setSelectedPlanId] = useState("");
+  const [customPlanName, setCustomPlanName] = useState("");
+  const [negType, setNegType] = useState<NegotiationType>("pix");
+  const [payMethod, setPayMethod] = useState(aluno.paymentMethod || "Pix");
+  const [negotiationNotes, setNegotiationNotes] = useState(aluno.negotiationNotes || "");
+
+  // Installments livres (cash/pix/custom)
+  const [installments, setInstallments] = useState<InstallmentDraft[]>([
+    { amount: "", dueDate: today, label: "Parcela 1" }
+  ]);
+
+  // Cartão
+  const [grossValue, setGrossValue]   = useState("");
+  const [netValue, setNetValue]       = useState("");
+  const [cashFlowDate, setCashDate]   = useState(today);
+  const [anticipation, setAnticip]    = useState(false);
+  // Para cartão sem antecipação: parcelas editáveis com datas livres
+  const [cardInstallments, setCardInstallments] = useState<InstallmentDraft[]>([
+    { amount: "", dueDate: today, label: "Parcela 1" }
+  ]);
+
+  const plan = plans.find(p => p.id === selectedPlanId);
+
+  // Reseta installments ao trocar tipo de negociação
+  function changeNegType(t: NegotiationType) {
+    setNegType(t);
+    if (t === "cash") {
+      setInstallments([{ amount: grossValue || "", dueDate: today, label: "Pagamento" }]);
+    } else if (t === "pix" || t === "custom") {
+      // Mantém o que já tem ou reseta para 1 linha
+      if (installments.length === 0 || (installments.length === 1 && !installments[0].amount)) {
+        setInstallments([{ amount: grossValue || "", dueDate: today, label: "Parcela 1" }]);
+      }
+    } else if (t === "card") {
+      // Sincroniza cardInstallments com o plano se houver
+      if (plan) {
+        const per = parseFloat((plan.totalAmount / plan.installments).toFixed(2));
+        setCardInstallments(Array.from({ length: plan.installments }, (_, i) => ({
+          amount:  String(per),
+          dueDate: today,
+          label:   `Parcela ${i + 1}`,
+        })));
+      }
+    }
+  }
+
+  // Auto-preenche ao selecionar plano
+  function applyPlan(p: ServicePlan) {
+    setSelectedPlanId(p.id);
+    setCustomPlanName("");
+    setGrossValue(String(p.totalAmount));
+    setNetValue(String(p.totalAmount));
+    const per = parseFloat((p.totalAmount / p.installments).toFixed(2));
+    const makeLabel = (i: number) => p.installments === 1 ? "Pagamento" : i === 0 ? "1ª parcela" : `${i + 1}ª parcela`;
+    if (negType === "pix" || negType === "cash" || negType === "custom") {
+      setInstallments(Array.from({ length: p.installments }, (_, i) => ({
+        amount: String(per), dueDate: today, label: makeLabel(i),
+      })));
+    } else if (negType === "card") {
+      setCardInstallments(Array.from({ length: p.installments }, (_, i) => ({
+        amount: String(per), dueDate: today, label: `Parcela ${i + 1}`,
+      })));
+    }
+  }
+
+  // IA
+  async function handleAnalyzeIA() {
+    if (!negotiationNotes.trim()) return;
+    setAnalyzing(true);
+    setAiSummary("");
+    try {
+      const res = await fetch("/api/alunos/analisar", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          texto: negotiationNotes,
+          serviceValue: grossValue || plan?.totalAmount,
+          planName: plan?.name || customPlanName,
+          paymentMethod: payMethod,
+        }),
+      });
+      const data = await res.json();
+      if (data.customInstallments?.length) {
+        setInstallments(data.customInstallments.map((i: { amount: number; dueDate: string; label?: string }, idx: number) => ({
+          amount:  String(i.amount),
+          dueDate: i.dueDate,
+          label:   i.label || `${idx + 1}ª parcela`,
+        })));
+        if (data.totalAmount) setGrossValue(String(data.totalAmount));
+        if (data.paymentMethod) setPayMethod(data.paymentMethod);
+        if (data.summary) setAiSummary(data.summary);
+        if (negType === "cash" || negType === "custom") setNegType("pix");
+      }
+    } finally {
+      setAnalyzing(false);
+    }
+  }
+
+  function addInstallment() {
+    const last = installments[installments.length - 1];
+    setInstallments(prev => [...prev, {
+      amount:  last?.amount || "",
+      dueDate: today,
+      label:   `${prev.length + 1}ª parcela`,
+    }]);
+  }
+
+  function removeInstallment(idx: number) {
+    setInstallments(prev => prev.filter((_, i) => i !== idx));
+  }
+
+  function updateInstallment(idx: number, field: keyof InstallmentDraft, value: string | boolean) {
+    setInstallments(prev => prev.map((inst, i) => i === idx ? { ...inst, [field]: value } : inst));
+  }
+
+  async function handleSave() {
+    const descricao = plan?.name || customPlanName || "Plano";
+    const body: Record<string, unknown> = {
+      clientId:         aluno.id,
+      description:      descricao,
+      negotiationType:  negType,
+      paymentMethod:    payMethod,
+      negotiationNotes: negotiationNotes || null,
+      servicePlanId:    selectedPlanId || null,
+    };
+
+    if (negType === "card") {
+      const gross = parseFloat(grossValue.replace(",", ".")) || 0;
+      if (!gross) return;
+      body.totalAmount = gross;
+      body.grossValue  = gross;
+      if (anticipation) {
+        const net = parseFloat(netValue.replace(",", ".")) || gross;
+        body.netValue     = net;
+        body.cashFlowDate = cashFlowDate;
+        body.customInstallments = [{ amount: net, dueDate: cashFlowDate, label: "Recebimento antecipado", netValue: net }];
+      } else {
+        body.customInstallments = cardInstallments
+          .filter(i => parseFloat(i.amount) > 0)
+          .map(i => ({ ...i, amount: parseFloat(i.amount) }));
+      }
+    } else {
+      const total = installments.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
+      if (!total) return;
+      body.totalAmount        = total;
+      body.customInstallments = installments
+        .filter(i => parseFloat(i.amount) > 0)
+        .map(i => ({ ...i, amount: parseFloat(i.amount) }));
+    }
+
+    if (!body.totalAmount) return;
+    setSaving(true);
+    try {
+      const res = await fetch("/api/financeiro/vendas", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const sale = await res.json();
+      if (sale.id) onSaved(sale);
+      else alert("Erro ao salvar: " + (sale.error || "tente novamente"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const totalInstallments = installments.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
+  const totalCard = parseFloat(grossValue.replace(",", ".")) || 0;
+
+  // Resumo antes de salvar
+  function getResumo() {
+    if (negType === "card") {
+      const gross = totalCard;
+      const net   = anticipation ? (parseFloat(netValue.replace(",", ".")) || gross) : gross;
+      return { faturamento: gross, caixa: net, parcelas: anticipation ? 1 : cardInstallments.filter(i => parseFloat(i.amount) > 0).length };
+    }
+    return { faturamento: totalInstallments, caixa: totalInstallments, parcelas: installments.filter(i => parseFloat(i.amount) > 0).length };
+  }
+  const resumo = getResumo();
+  const inputClsLocal = "w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white";
+  const inputSmCls = "border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-indigo-400 bg-white";
+
   return (
-    <div className="col-span-2 p-3 bg-indigo-50 border border-indigo-200 rounded-xl">
-      <p className="text-xs font-bold text-indigo-600 mb-1.5">
-        {planName === "Parceria/Collab" ? "Descreva a parceria / collab" : "Descreva o plano personalizado"}
-      </p>
-      <textarea rows={2} value={value} onChange={e => set(e.target.value)}
-        placeholder={planName === "Parceria/Collab" ? "Ex: 3 meses grátis em troca de divulgação..." : "Ex: 2x por semana online + 1x presencial..."}
-        className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white resize-none" />
+    <div className="space-y-5">
+
+      {/* Seção 1 — Plano */}
+      <div>
+        <p className="text-[11px] font-bold text-gray-400 uppercase mb-2">Plano / Produto</p>
+        <div className="grid grid-cols-2 gap-2">
+          {plans.filter(p => p.active).map(p => (
+            <button key={p.id} onClick={() => applyPlan(p)}
+              className={`text-left px-3 py-2 rounded-xl border text-sm transition-all ${
+                selectedPlanId === p.id
+                  ? "border-indigo-400 bg-indigo-50 text-indigo-700"
+                  : "border-gray-200 hover:border-indigo-300 text-gray-700"
+              }`}>
+              <p className="font-semibold">{p.name}</p>
+              <p className="text-xs text-gray-400">{fmt(p.totalAmount)} · {p.installments}x · {p.durationMonths} {p.durationMonths === 1 ? "mês" : "meses"}</p>
+            </button>
+          ))}
+          <button onClick={() => { setSelectedPlanId(""); setCustomPlanName(""); }}
+            className={`text-left px-3 py-2 rounded-xl border text-sm transition-all ${
+              !selectedPlanId ? "border-indigo-400 bg-indigo-50 text-indigo-700" : "border-gray-200 hover:border-indigo-300 text-gray-700"
+            }`}>
+            <p className="font-semibold">Personalizado</p>
+            <p className="text-xs text-gray-400">Valor e condições livres</p>
+          </button>
+        </div>
+        {!selectedPlanId && (
+          <input value={customPlanName} onChange={e => setCustomPlanName(e.target.value)}
+            placeholder="Nome do plano personalizado (ex: Mensal, Pacote especial...)"
+            className={`${inputClsLocal} mt-2`} />
+        )}
+        {plan && (
+          <div className="mt-2 bg-indigo-50 border border-indigo-100 rounded-xl px-3 py-2 text-xs text-indigo-700">
+            <span className="font-bold">{plan.name}</span> — {fmt(plan.totalAmount)} em {plan.installments}x · {plan.durationMonths} meses
+            {plan.description && <span className="text-indigo-500"> · {plan.description}</span>}
+          </div>
+        )}
+      </div>
+
+      {/* Seção 2 — Tipo de negociação */}
+      <div>
+        <p className="text-[11px] font-bold text-gray-400 uppercase mb-2">Tipo de negociação</p>
+        <div className="grid grid-cols-2 gap-2">
+          {NEG_TYPES.map(t => (
+            <button key={t.value} onClick={() => changeNegType(t.value)}
+              className={`text-left px-3 py-2 rounded-xl border text-sm transition-all ${
+                negType === t.value
+                  ? "border-indigo-500 bg-indigo-50 text-indigo-700"
+                  : "border-gray-200 hover:border-indigo-300 text-gray-700"
+              }`}>
+              <p className="font-semibold">{t.label}</p>
+              <p className="text-[10px] text-gray-400">{t.desc}</p>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Seção 3 — Condições */}
+      <div>
+        <p className="text-[11px] font-bold text-gray-400 uppercase mb-2">Condições financeiras</p>
+
+        {/* Forma de pagamento */}
+        <div className="flex gap-2 mb-3 flex-wrap">
+          {PAYMENT_METHODS.map(m => (
+            <button key={m} onClick={() => setPayMethod(m)}
+              className={`px-3 py-1 rounded-lg text-xs font-semibold border transition-colors ${
+                payMethod === m ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:border-indigo-300"
+              }`}>{m}</button>
+          ))}
+        </div>
+
+        {/* À VISTA */}
+        {negType === "cash" && (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[10px] font-semibold text-gray-500 mb-1">Valor</label>
+                <input value={installments[0]?.amount || ""} type="number" step="0.01"
+                  onChange={e => updateInstallment(0, "amount", e.target.value)}
+                  placeholder="0,00" className={inputClsLocal}/>
+              </div>
+              <div>
+                <label className="block text-[10px] font-semibold text-gray-500 mb-1">Data do pagamento</label>
+                <input type="date" value={installments[0]?.dueDate || today}
+                  onChange={e => updateInstallment(0, "dueDate", e.target.value)}
+                  className={inputClsLocal}/>
+              </div>
+            </div>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={!!installments[0]?.paid}
+                onChange={e => updateInstallment(0, "paid", e.target.checked)}
+                className="accent-indigo-600"/>
+              <span className="text-xs text-gray-700 font-medium">Já recebi — marcar como pago</span>
+            </label>
+          </div>
+        )}
+
+        {/* PIX PARCELADO ou PERSONALIZADO */}
+        {(negType === "pix" || negType === "custom") && (
+          <div className="space-y-2">
+            {installments.map((inst, idx) => (
+              <div key={idx} className="flex items-center gap-2 p-2 bg-gray-50 rounded-xl border border-gray-200">
+                <div className="flex-1 min-w-0 grid grid-cols-[1fr_1fr_100px] gap-2 items-center">
+                  <input value={inst.label} onChange={e => updateInstallment(idx, "label", e.target.value)}
+                    placeholder={`${idx + 1}ª parcela`} className={inputSmCls}/>
+                  <input type="number" step="0.01" value={inst.amount}
+                    onChange={e => updateInstallment(idx, "amount", e.target.value)}
+                    placeholder="R$" className={inputSmCls}/>
+                  <input type="date" value={inst.dueDate}
+                    onChange={e => updateInstallment(idx, "dueDate", e.target.value)}
+                    className={inputSmCls}/>
+                </div>
+                <label className="flex items-center gap-1 shrink-0">
+                  <input type="checkbox" checked={!!inst.paid}
+                    onChange={e => updateInstallment(idx, "paid", e.target.checked)}
+                    className="accent-green-600"/>
+                  <span className="text-[10px] text-gray-500">Pago</span>
+                </label>
+                <button onClick={() => removeInstallment(idx)}
+                  className="text-gray-300 hover:text-red-400 shrink-0"><X className="w-3.5 h-3.5"/></button>
+              </div>
+            ))}
+            <button onClick={addInstallment}
+              className="flex items-center gap-1 text-xs text-indigo-600 hover:underline mt-1">
+              <Plus className="w-3.5 h-3.5"/> Adicionar parcela
+            </button>
+            {totalInstallments > 0 && (
+              <div className="flex justify-between text-sm font-semibold border-t border-gray-100 pt-2 mt-2">
+                <span className="text-gray-600">Total</span>
+                <span className="text-indigo-700">{fmt(totalInstallments)}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* CARTÃO */}
+        {negType === "card" && (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-[10px] font-semibold text-gray-500 mb-1">Valor total da venda (faturamento)</label>
+              <input type="number" step="0.01" value={grossValue}
+                onChange={e => setGrossValue(e.target.value)}
+                placeholder="R$" className={inputClsLocal}/>
+            </div>
+
+            <label className="flex items-center gap-2 cursor-pointer p-3 bg-amber-50 rounded-xl border border-amber-200">
+              <input type="checkbox" checked={anticipation} onChange={e => setAnticip(e.target.checked)}
+                className="accent-amber-500"/>
+              <div>
+                <span className="text-sm font-semibold text-amber-800">Antecipação de recebíveis</span>
+                <p className="text-[10px] text-amber-600">Recebi o valor adiantado com desconto da operadora</p>
+              </div>
+            </label>
+
+            {anticipation ? (
+              /* Antecipação: 1 entrada com valor líquido */
+              <div className="grid grid-cols-2 gap-2 p-3 bg-gray-50 rounded-xl border border-gray-200">
+                <div>
+                  <label className="block text-[10px] font-semibold text-gray-500 mb-1">Valor líquido recebido</label>
+                  <input type="number" step="0.01" value={netValue}
+                    onChange={e => setNetValue(e.target.value)}
+                    placeholder="R$" className={inputClsLocal}/>
+                  {grossValue && netValue && parseFloat(grossValue) > 0 && (
+                    <p className="text-[10px] text-gray-400 mt-0.5">
+                      Taxa: {(100 - (parseFloat(netValue) / parseFloat(grossValue) * 100)).toFixed(2)}%
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-gray-500 mb-1">Data entrada no caixa</label>
+                  <input type="date" value={cashFlowDate}
+                    onChange={e => setCashDate(e.target.value)}
+                    className={inputClsLocal}/>
+                </div>
+              </div>
+            ) : (
+              /* Sem antecipação: parcelas com datas livres */
+              <div>
+                <p className="text-[10px] font-semibold text-gray-500 mb-2">Parcelas do cliente (defina datas manualmente)</p>
+                <div className="space-y-2">
+                  {cardInstallments.map((inst, idx) => (
+                    <div key={idx} className="flex items-center gap-2 p-2 bg-gray-50 rounded-xl border border-gray-200">
+                      <div className="flex-1 min-w-0 grid grid-cols-[1fr_90px_100px] gap-2 items-center">
+                        <input value={inst.label} onChange={e => setCardInstallments(prev => prev.map((x, i) => i === idx ? { ...x, label: e.target.value } : x))}
+                          placeholder={`Parcela ${idx + 1}`} className={inputSmCls}/>
+                        <input type="number" step="0.01" value={inst.amount}
+                          onChange={e => setCardInstallments(prev => prev.map((x, i) => i === idx ? { ...x, amount: e.target.value } : x))}
+                          placeholder="R$" className={inputSmCls}/>
+                        <input type="date" value={inst.dueDate}
+                          onChange={e => setCardInstallments(prev => prev.map((x, i) => i === idx ? { ...x, dueDate: e.target.value } : x))}
+                          className={inputSmCls}/>
+                      </div>
+                      <button onClick={() => setCardInstallments(prev => prev.filter((_, i) => i !== idx))}
+                        className="text-gray-300 hover:text-red-400 shrink-0"><X className="w-3.5 h-3.5"/></button>
+                    </div>
+                  ))}
+                  <button onClick={() => setCardInstallments(prev => [...prev, { amount: "", dueDate: today, label: `Parcela ${prev.length + 1}` }])}
+                    className="flex items-center gap-1 text-xs text-indigo-600 hover:underline">
+                    <Plus className="w-3.5 h-3.5"/> Adicionar parcela
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* IA */}
+      <div>
+        <p className="text-[11px] font-bold text-gray-400 uppercase mb-2">Negociação (texto livre)</p>
+        <div className="relative">
+          <textarea rows={2} value={negotiationNotes} onChange={e => setNegotiationNotes(e.target.value)}
+            placeholder="Ex: R$400 entrada hoje, restante em 4x de R$500 nos dias 10 de cada mês..."
+            className={`${inputClsLocal} resize-none pr-28`}/>
+          <div className="absolute right-2 bottom-2 flex gap-1">
+            {aiSummary && (
+              <button onClick={() => { setAiSummary(""); setInstallments([{ amount: "", dueDate: today, label: "Parcela 1" }]); }}
+                title="Limpar leitura IA"
+                className="text-[10px] px-2 py-1 rounded-lg bg-gray-200 text-gray-600 hover:bg-gray-300">
+                Limpar
+              </button>
+            )}
+            <button onClick={handleAnalyzeIA} disabled={analyzing || !negotiationNotes.trim()}
+              className="text-[10px] px-2.5 py-1 rounded-lg text-white disabled:opacity-40"
+              style={{ background: "#6366f1" }}>
+              {analyzing ? "Analisando..." : aiSummary ? "✨ Refazer" : "✨ Analisar"}
+            </button>
+          </div>
+        </div>
+        {aiSummary && (
+          <div className="mt-1.5 text-xs bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2 text-indigo-800">
+            <span className="font-bold">IA detectou:</span> {aiSummary}
+            <span className="text-indigo-500 ml-2">(edite as parcelas acima se necessário)</span>
+          </div>
+        )}
+      </div>
+
+      {/* Resumo antes de salvar */}
+      {(resumo.faturamento > 0) && (
+        <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 space-y-2">
+          <p className="text-[11px] font-bold text-gray-400 uppercase">Resumo da negociação</p>
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="bg-white rounded-lg p-2 border border-gray-100">
+              <p className="text-[10px] text-gray-400 uppercase font-bold">Faturamento</p>
+              <p className="text-sm font-bold text-indigo-700">{fmt(resumo.faturamento)}</p>
+            </div>
+            <div className="bg-white rounded-lg p-2 border border-gray-100">
+              <p className="text-[10px] text-gray-400 uppercase font-bold">Caixa</p>
+              <p className={`text-sm font-bold ${resumo.caixa < resumo.faturamento ? "text-amber-600" : "text-green-700"}`}>
+                {fmt(resumo.caixa)}
+              </p>
+            </div>
+            <div className="bg-white rounded-lg p-2 border border-gray-100">
+              <p className="text-[10px] text-gray-400 uppercase font-bold">Parcelas</p>
+              <p className="text-sm font-bold text-gray-700">{resumo.parcelas}x</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 text-xs text-gray-500">
+            <span className="font-medium">{plan?.name || customPlanName || "Personalizado"}</span>
+            <span>·</span>
+            <span>{payMethod}</span>
+            <span>·</span>
+            <span>{negType === "card" ? (anticipation ? "Cartão antecipado" : "Cartão parcelado") : negType === "pix" ? "PIX parcelado" : negType === "cash" ? "À vista" : "Personalizado"}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Botões */}
+      <div className="flex gap-2 pt-1">
+        <button onClick={onCancel} className="flex-1 py-2 rounded-xl text-sm border border-gray-200 text-gray-600 hover:bg-gray-50">
+          Cancelar
+        </button>
+        <button onClick={handleSave} disabled={saving || resumo.faturamento === 0}
+          className="flex-1 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
+          style={{ background: "#6366f1" }}>
+          {saving ? "Salvando..." : "Salvar e enviar ao Financeiro"}
+        </button>
+      </div>
     </div>
   );
 }
 
 // ─── Modal Novo Aluno ─────────────────────────────────────────────
-function NovoAlunoModal({ onClose, onSave }: { onClose: () => void; onSave: (a: Aluno) => void }) {
+function NovoAlunoModal({ onClose, onSave, plans }: { onClose: () => void; onSave: (a: Aluno) => void; plans: ServicePlan[] }) {
   const [form, setForm] = useState({
     name: "", email: "", phone: "", status: "ativo", source: "",
     planName: "", planDetails: "", paymentMethod: "Pix",
@@ -91,6 +573,8 @@ function NovoAlunoModal({ onClose, onSave }: { onClose: () => void; onSave: (a: 
     onSave(await res.json());
     setSaving(false);
   }
+
+  const isSpecial = SPECIAL_PLAN_OPTIONS.some(p => p.value === form.planName);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -125,37 +609,60 @@ function NovoAlunoModal({ onClose, onSave }: { onClose: () => void; onSave: (a: 
             </div>
           </div>
 
-          <div className="border-t border-gray-100 pt-4 grid grid-cols-2 gap-3">
+          <div className="border-t border-gray-100 pt-4 space-y-3">
             <div>
               <label className="block text-xs font-semibold text-gray-500 mb-1">Plano</label>
-              <select value={form.planName} onChange={e => set("planName", e.target.value)} className={inputCls}>
-                <option value="">Selecionar...</option>
-                {PLAN_OPTIONS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-gray-500 mb-1">Forma de Pagamento</label>
-              <select value={form.paymentMethod} onChange={e => set("paymentMethod", e.target.value)} className={inputCls}>
-                {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
-              </select>
-            </div>
-            <div className="col-span-2">
-              <label className="block text-xs font-semibold text-gray-500 mb-1">De qual funil veio?</label>
-              <select value={form.source} onChange={e => set("source", e.target.value)} className={inputCls}>
-                <option value="">Selecionar...</option>
-                {FUNIL_OPTIONS.map(f => <option key={f} value={f}>{f}</option>)}
-              </select>
-            </div>
-            {planNeedsDetails(form.planName) && (
-              <div className="col-span-2 p-3 bg-indigo-50 border border-indigo-200 rounded-xl">
-                <p className="text-xs font-bold text-indigo-600 mb-1.5">
-                  {form.planName === "Parceria/Collab" ? "Descreva a parceria / collab" : "Descreva o plano personalizado"}
-                </p>
-                <textarea rows={2} value={form.planDetails} onChange={e => set("planDetails", e.target.value)}
-                  placeholder={form.planName === "Parceria/Collab" ? "Ex: 3 meses grátis em troca de divulgação..." : "Ex: 2x por semana online + 1x presencial..."}
-                  className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white resize-none" />
+              <div className="grid grid-cols-2 gap-2">
+                {plans.filter(p => p.active).map(p => (
+                  <button type="button" key={p.id} onClick={() => set("planName", p.name)}
+                    className={`text-left px-3 py-2 rounded-xl border text-sm transition-all ${
+                      form.planName === p.name
+                        ? "border-indigo-400 bg-indigo-50 text-indigo-700"
+                        : "border-gray-200 hover:border-indigo-300 text-gray-700"
+                    }`}>
+                    <p className="font-semibold">{p.name}</p>
+                    <p className="text-xs text-gray-400">{fmt(p.totalAmount)} · {p.installments}x</p>
+                  </button>
+                ))}
+                {SPECIAL_PLAN_OPTIONS.map(p => (
+                  <button type="button" key={p.value} onClick={() => set("planName", p.value)}
+                    className={`text-left px-3 py-2 rounded-xl border text-sm transition-all ${
+                      form.planName === p.value
+                        ? "border-indigo-400 bg-indigo-50 text-indigo-700"
+                        : "border-gray-200 hover:border-indigo-300 text-gray-700"
+                    }`}>
+                    <p className="font-semibold">{p.label}</p>
+                    <p className="text-xs text-gray-400">Sem cobrança padrão</p>
+                  </button>
+                ))}
               </div>
-            )}
+              {isSpecial && (
+                <div className="mt-2 p-3 bg-indigo-50 border border-indigo-200 rounded-xl">
+                  <p className="text-xs font-bold text-indigo-600 mb-1.5">
+                    {form.planName === "Parceria/Collab" ? "Descreva a parceria / collab" : "Descreva o plano personalizado"}
+                  </p>
+                  <textarea rows={2} value={form.planDetails} onChange={e => set("planDetails", e.target.value)}
+                    placeholder={form.planName === "Parceria/Collab" ? "Ex: 3 meses grátis em troca de divulgação..." : "Ex: 2x por semana online + 1x presencial..."}
+                    className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white resize-none" />
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Forma de Pagamento</label>
+                <select value={form.paymentMethod} onChange={e => set("paymentMethod", e.target.value)} className={inputCls}>
+                  {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">De qual funil veio?</label>
+                <select value={form.source} onChange={e => set("source", e.target.value)} className={inputCls}>
+                  <option value="">Selecionar...</option>
+                  {FUNIL_OPTIONS.map(f => <option key={f} value={f}>{f}</option>)}
+                </select>
+              </div>
+            </div>
           </div>
 
           <div className="border-t border-gray-100 pt-4 space-y-3">
@@ -332,9 +839,9 @@ function ImportModal({ onClose, onImport }: { onClose: () => void; onImport: (al
 }
 
 // ─── Drawer Detalhe ───────────────────────────────────────────────
-function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm }: {
+function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plans }: {
   aluno: Aluno; onClose: () => void; onUpdate: (a: Aluno) => void; onDelete: (id: string) => void;
-  autoOpenPayForm?: boolean;
+  autoOpenPayForm?: boolean; plans: ServicePlan[];
 }) {
   const [editando, setEditando] = useState(false);
   const [form, setForm] = useState({
@@ -347,23 +854,48 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm }: {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const [showPayForm, setShowPayForm] = useState(autoOpenPayForm ?? false);
-  type CustomInst = { amount: string; dueDate: string; label: string };
-  const [payForm, setPayForm] = useState({
-    planName: aluno.planName || "",
-    serviceValue: "",
-    totalAmount: "", installments: "1",
-    firstDueDate: new Date().toISOString().slice(0, 10),
-    paymentMethod: aluno.paymentMethod || "Pix",
-    negotiationNotes: aluno.negotiationNotes || "",
-  });
-  const [customInsts, setCustomInsts] = useState<CustomInst[]>([]);
-  const [savingPay, setSavingPay] = useState(false);
-  const [analyzingObs, setAnalyzingObs] = useState(false);
-  const [aiSuggestion, setAiSuggestion] = useState<{ summary: string; description: string; totalAmount: number; installments: number; firstDueDate: string; paymentMethod: string } | null>(null);
   const [sales, setSales] = useState<Sale[]>(aluno.sales);
+  const [tasks, setTasks] = useState<ClientTask[]>([]);
+  const [observacoes, setObservacoes] = useState<Observacao[]>([]);
+  const [newObsText, setNewObsText] = useState("");
+  const [savingObs, setSavingObs] = useState(false);
+  const [drawerTab, setDrawerTab] = useState<"info" | "tarefas" | "obs">("info");
   const fileRef = useRef<HTMLInputElement>(null);
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
-  const setPay = (k: string, v: string) => setPayForm(f => ({ ...f, [k]: v }));
+
+  useEffect(() => {
+    fetch(`/api/tarefas?clientId=${aluno.id}&status=all`)
+      .then(r => r.json())
+      .then(data => setTasks(Array.isArray(data) ? data.filter((t: ClientTask) => t.status !== "done") : []));
+    fetch(`/api/alunos/${aluno.id}/observacoes`)
+      .then(r => r.json())
+      .then(data => setObservacoes(Array.isArray(data) ? data : []));
+  }, [aluno.id]);
+
+  async function handleSaveObs() {
+    if (!newObsText.trim()) return;
+    setSavingObs(true);
+    const res = await fetch(`/api/alunos/${aluno.id}/observacoes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: newObsText.trim(), type: "nota" }),
+    });
+    const obs = await res.json();
+    setObservacoes(prev => [obs, ...prev]);
+    setNewObsText("");
+    setSavingObs(false);
+  }
+
+  // Próxima ação recomendada
+  function nextRecommendedAction(): { text: string; color: string; icon: "alert" | "task" | "check" } | null {
+    if (vencidas.length > 0) return { text: `${vencidas.length} parcela${vencidas.length > 1 ? "s" : ""} vencida${vencidas.length > 1 ? "s" : ""} — cobrar`, color: "red", icon: "alert" };
+    const overdueTask = tasks.find(t => t.dueDate && new Date(t.dueDate) < new Date());
+    if (overdueTask) return { text: `Tarefa atrasada: ${overdueTask.title}`, color: "amber", icon: "task" };
+    const urgentTask = tasks.find(t => t.urgent);
+    if (urgentTask) return { text: `Tarefa urgente: ${urgentTask.title}`, color: "orange", icon: "task" };
+    return null;
+  }
+  const nextAction = nextRecommendedAction();
 
   // Totais sempre calculados do sales state — reativos
   const allInstallments = sales.flatMap(s => s.installments);
@@ -372,8 +904,6 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm }: {
   const vencidas = allInstallments.filter(i => i.status !== "pago" && new Date(i.dueDate) < new Date());
   const health: "green" | "red" = vencidas.length > 0 ? "red" : "green";
   const contrato = aluno.files?.find(f => f.category === "contrato");
-  const payTotal = parseFloat(payForm.totalAmount.replace(",", ".")) || 0;
-  const payCount = Math.max(1, parseInt(payForm.installments) || 1);
 
   async function handleSave() {
     setSaving(true);
@@ -386,85 +916,20 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm }: {
     setEditando(false);
   }
 
-  async function handleAnalyzeObs(source?: "payForm") {
-    const texto = source === "payForm" ? payForm.negotiationNotes : (form.negotiationNotes || form.notes);
-    if (!texto?.trim()) return;
-    setAnalyzingObs(true);
-    setAiSuggestion(null);
-    const res = await fetch("/api/alunos/analisar", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ texto, serviceValue: payForm.serviceValue, planName: payForm.planName || aluno.planName, paymentMethod: payForm.paymentMethod }),
-    });
-    const data = await res.json();
-    if (!data.error) {
-      setAiSuggestion(data);
-      setShowPayForm(true);
-      if (data.customInstallments?.length) {
-        setCustomInsts(data.customInstallments.map((i: { amount: number; dueDate: string; label?: string }) => ({
-          amount: String(i.amount),
-          dueDate: i.dueDate,
-          label: i.label || "",
-        })));
-      }
-      setPayForm(f => ({
-        ...f,
-        totalAmount:   String(data.totalAmount || ""),
-        paymentMethod: data.paymentMethod || f.paymentMethod,
-      }));
-    }
-    setAnalyzingObs(false);
-  }
-
-  async function handleAddPayment() {
-    const useCustom = customInsts.length > 0;
-    const total = useCustom
-      ? customInsts.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0)
-      : payTotal;
-    if (!total) return;
-    setSavingPay(true);
-
-    const body: Record<string, unknown> = {
-      clientId:         aluno.id,
-      description:      payForm.planName || "Plano",
-      totalAmount:      total,
-      paymentMethod:    payForm.paymentMethod,
-      negotiationNotes: payForm.negotiationNotes || null,
-    };
-
-    if (useCustom) {
-      body.customInstallments = customInsts.map(i => ({
-        amount: parseFloat(i.amount) || 0,
-        dueDate: i.dueDate,
-      }));
-    } else {
-      body.installmentsCount = payCount;
-      body.firstDueDate      = payForm.firstDueDate;
-    }
-
-    const res = await fetch("/api/financeiro/vendas", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const newSale = await res.json();
-    setSales(prev => [newSale, ...prev]);
-    setShowPayForm(false);
-    setAiSuggestion(null);
-    setCustomInsts([]);
-    setPayForm(f => ({ ...f, totalAmount: "", installments: "1", negotiationNotes: "", serviceValue: "" }));
-    setSavingPay(false);
-  }
-
-  async function toggleInstallment(saleId: string, instId: string, currentStatus: string) {
-    const newStatus = currentStatus === "pago" ? "pendente" : "pago";
+  async function patchInstallment(saleId: string, instId: string, patch: Record<string, unknown>) {
     const res = await fetch(`/api/financeiro/vendas/${saleId}/parcelas/${instId}`, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: newStatus }),
+      body: JSON.stringify(patch),
     });
     const updated = await res.json();
     setSales(prev => prev.map(s => s.id === saleId
       ? { ...s, installments: s.installments.map(i => i.id === instId ? { ...i, ...updated } : i) }
       : s
     ));
+  }
+
+  function toggleInstallment(saleId: string, instId: string, currentStatus: string) {
+    return patchInstallment(saleId, instId, { status: currentStatus === "pago" ? "pendente" : "pago" });
   }
 
   async function handleContractUpload(file: File) {
@@ -481,8 +946,13 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm }: {
   }
 
   async function handleDelete() {
-    if (!confirm(`Remover ${aluno.name}?`)) return;
-    await fetch(`/api/alunos/${aluno.id}`, { method: "DELETE" });
+    if (!confirm(`Remover ${aluno.name} e todos os dados financeiros vinculados?`)) return;
+    const res = await fetch(`/api/alunos/${aluno.id}`, { method: "DELETE" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(`Erro ao remover aluno: ${data.error || "tente novamente"}`);
+      return;
+    }
     onDelete(aluno.id);
   }
 
@@ -510,8 +980,42 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm }: {
           <button onClick={onClose}><X className="w-5 h-5 text-gray-400" /></button>
         </div>
 
+        {/* Próxima ação recomendada */}
+        {nextAction && (
+          <div className={`px-5 py-2.5 flex items-center gap-2 text-sm font-medium ${
+            nextAction.color === "red" ? "bg-red-50 text-red-700" :
+            nextAction.color === "amber" ? "bg-amber-50 text-amber-700" :
+            "bg-orange-50 text-orange-700"
+          }`}>
+            {nextAction.icon === "alert" ? <AlertTriangle className="w-4 h-4 shrink-0" /> : <Zap className="w-4 h-4 shrink-0" />}
+            <p className="truncate">{nextAction.text}</p>
+          </div>
+        )}
+
+        {/* Tabs */}
+        <div className="flex border-b border-gray-100 bg-white shrink-0">
+          {[
+            { id: "info" as const, label: "Perfil" },
+            { id: "tarefas" as const, label: `Tarefas${tasks.length > 0 ? ` (${tasks.length})` : ""}` },
+            { id: "obs" as const, label: `Obs.${observacoes.length > 0 ? ` (${observacoes.length})` : ""}` },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setDrawerTab(tab.id)}
+              className={`flex-1 py-2.5 text-xs font-semibold transition-colors border-b-2 ${
+                drawerTab === tab.id
+                  ? "border-indigo-500 text-indigo-600"
+                  : "border-transparent text-gray-400 hover:text-gray-600"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
         <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
-          {/* Info */}
+          {/* ── Tab: Info ─────────────────── */}
+          {drawerTab === "info" && (<>
           <div className="px-5 py-4">
             <div className="flex items-center justify-between mb-3">
               <span className="text-[11px] font-bold text-gray-400 uppercase">Informações</span>
@@ -534,34 +1038,30 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm }: {
                 </div>
                 <select value={form.planName} onChange={e => set("planName", e.target.value)} className={inputCls}>
                   <option value="">Plano...</option>
-                  {PLAN_OPTIONS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+                  {plans.filter(p => p.active).map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+                  {SPECIAL_PLAN_OPTIONS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
                 </select>
                 <select value={form.paymentMethod} onChange={e => set("paymentMethod", e.target.value)} className={inputCls}>
                   {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
                 </select>
-                <PlanDetailsCard planName={form.planName} value={form.planDetails} set={v => set("planDetails", v)} />
+                {SPECIAL_PLAN_OPTIONS.some(p => p.value === form.planName) && (
+                  <div className="col-span-2 p-3 bg-indigo-50 border border-indigo-200 rounded-xl">
+                    <p className="text-xs font-bold text-indigo-600 mb-1.5">
+                      {form.planName === "Parceria/Collab" ? "Descreva a parceria / collab" : "Descreva o plano personalizado"}
+                    </p>
+                    <textarea rows={2} value={form.planDetails} onChange={e => set("planDetails", e.target.value)}
+                      placeholder={form.planName === "Parceria/Collab" ? "Ex: 3 meses grátis em troca de divulgação..." : "Ex: 2x por semana online + 1x presencial..."}
+                      className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white resize-none" />
+                  </div>
+                )}
                 <select value={form.source} onChange={e => set("source", e.target.value)} className={`${inputCls} col-span-2`}>
                   <option value="">Funil...</option>
                   {FUNIL_OPTIONS.map(f => <option key={f} value={f}>{f}</option>)}
                 </select>
                 <textarea rows={2} value={form.negotiationNotes} onChange={e => set("negotiationNotes", e.target.value)}
                   placeholder="Negociação..." className={`${inputCls} resize-none col-span-2`} />
-                <div className="col-span-2 relative">
-                  <textarea rows={3} value={form.notes} onChange={e => set("notes", e.target.value)}
-                    placeholder="Observações... Ex: entrada de R$500, restante em 30D no crédito"
-                    className={`${inputCls} resize-none pr-32`} />
-                  <button type="button" onClick={() => handleAnalyzeObs()} disabled={analyzingObs || !form.notes.trim()}
-                    className="absolute right-2 bottom-2 flex items-center gap-1 text-[10px] font-bold px-2.5 py-1.5 rounded-lg text-white disabled:opacity-40 transition-opacity"
-                    style={{ background: "#6366f1" }}>
-                    {analyzingObs ? "Analisando..." : "✨ Analisar com IA"}
-                  </button>
-                </div>
-                {aiSuggestion && (
-                  <div className="col-span-2 p-3 bg-indigo-50 border border-indigo-200 rounded-xl text-xs text-indigo-800">
-                    <p className="font-bold mb-0.5">IA detectou:</p>
-                    <p>{aiSuggestion.summary}</p>
-                  </div>
-                )}
+                <textarea rows={3} value={form.notes} onChange={e => set("notes", e.target.value)}
+                  placeholder="Observações..." className={`${inputCls} resize-none col-span-2`} />
                 <button onClick={handleSave} disabled={saving}
                   className="col-span-2 py-2 rounded-xl text-sm font-semibold text-white flex items-center justify-center gap-1 disabled:opacity-50" style={{ background: "#6366f1" }}>
                   <Save className="w-3.5 h-3.5" /> {saving ? "Salvando..." : "Salvar"}
@@ -576,7 +1076,7 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm }: {
                   {aluno.paymentMethod && <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{aluno.paymentMethod}</span>}
                   {aluno.source && <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">📍 {aluno.source}</span>}
                 </div>
-                {aluno.planDetails && planNeedsDetails(aluno.planName || "") && (
+                {aluno.planDetails && SPECIAL_PLAN_OPTIONS.some(p => p.value === aluno.planName) && (
                   <div className="col-span-2 p-2.5 bg-indigo-50 border border-indigo-100 rounded-lg text-xs text-indigo-800">
                     <span className="font-bold">{aluno.planName === "Parceria/Collab" ? "Parceria:" : "Personalizado:"}</span> {aluno.planDetails}
                   </div>
@@ -658,133 +1158,13 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm }: {
 
             {/* Formulário novo pagamento */}
             {showPayForm && (
-              <div className="mb-4 p-4 bg-indigo-50 border border-indigo-200 rounded-xl space-y-3">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs font-bold text-indigo-700">Novo lançamento financeiro</p>
-                  {aiSuggestion && <span className="text-[10px] bg-indigo-200 text-indigo-700 px-2 py-0.5 rounded-full font-bold">✨ IA</span>}
-                </div>
-
-                {/* Negociação + IA */}
-                <div>
-                  <label className="block text-[10px] font-semibold text-gray-500 mb-1">Negociação</label>
-                  <textarea rows={2} value={payForm.negotiationNotes} onChange={e => setPay("negotiationNotes", e.target.value)}
-                    placeholder="Ex: entrada de R$200, restante 4x no crédito..."
-                    className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white resize-none" />
-                  {!aiSuggestion && payForm.negotiationNotes.trim() && (
-                    <button type="button" onClick={() => handleAnalyzeObs("payForm")} disabled={analyzingObs}
-                      className="mt-1.5 text-[10px] font-bold px-2.5 py-1 rounded-lg text-white disabled:opacity-40"
-                      style={{ background: "#6366f1" }}>
-                      {analyzingObs ? "Analisando..." : "✨ Analisar com IA"}
-                    </button>
-                  )}
-                  {aiSuggestion && (
-                    <p className="mt-1 text-xs text-indigo-700 bg-white border border-indigo-200 rounded-lg px-2.5 py-1.5">
-                      <span className="font-bold">IA:</span> {aiSuggestion.summary}
-                    </p>
-                  )}
-                </div>
-
-                {/* Plano + Pagamento + Valor do serviço */}
-                <div className="grid grid-cols-2 gap-2">
-                  <select value={payForm.planName} onChange={e => setPay("planName", e.target.value)}
-                    className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white">
-                    <option value="">Plano...</option>
-                    {PLAN_OPTIONS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-                  </select>
-                  <select value={payForm.paymentMethod} onChange={e => setPay("paymentMethod", e.target.value)}
-                    className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white">
-                    {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-semibold text-gray-500 mb-1">Valor do serviço (R$) — usado para calcular "restante"</label>
-                  <input value={payForm.serviceValue} onChange={e => setPay("serviceValue", e.target.value)}
-                    placeholder="Ex: 1200,00" type="number" step="0.01"
-                    className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
-                </div>
-
-                {/* Parcelas da IA (editáveis) */}
-                {customInsts.length > 0 ? (
-                  <div className="bg-white border border-indigo-200 rounded-lg p-3 space-y-2">
-                    <div className="flex items-center justify-between mb-1">
-                      <p className="text-[10px] font-bold text-indigo-500 uppercase">Parcelas detectadas pela IA</p>
-                      <button type="button" onClick={() => setCustomInsts([])} className="text-[10px] text-red-400 hover:underline">Limpar</button>
-                    </div>
-                    {customInsts.map((inst, i) => (
-                      <div key={i} className="flex items-center gap-2">
-                        <span className="text-[10px] text-indigo-400 font-bold w-16 shrink-0">{inst.label || `${i + 1}ª`}</span>
-                        <input value={inst.amount} type="number" step="0.01" placeholder="R$"
-                          onChange={e => setCustomInsts(prev => prev.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))}
-                          className="flex-1 border border-indigo-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
-                        <input type="date" value={inst.dueDate}
-                          onChange={e => setCustomInsts(prev => prev.map((x, j) => j === i ? { ...x, dueDate: e.target.value } : x))}
-                          className="flex-1 border border-indigo-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
-                        <button type="button" onClick={() => setCustomInsts(prev => prev.filter((_, j) => j !== i))}
-                          className="text-red-300 hover:text-red-500 shrink-0"><X className="w-3.5 h-3.5" /></button>
-                      </div>
-                    ))}
-                    <button type="button"
-                      onClick={() => setCustomInsts(prev => {
-                        const last = prev[prev.length - 1];
-                        const next = last?.dueDate ? (() => { const d = new Date(last.dueDate + "T12:00"); d.setMonth(d.getMonth() + 1); return d.toISOString().slice(0, 10); })() : new Date().toISOString().slice(0, 10);
-                        return [...prev, { amount: "", dueDate: next, label: "" }];
-                      })}
-                      className="text-xs text-indigo-500 hover:underline flex items-center gap-0.5">
-                      <Plus className="w-3 h-3" /> Adicionar parcela
-                    </button>
-                    <div className="flex justify-between text-xs font-bold border-t border-indigo-100 pt-2">
-                      <span className="text-gray-600">Total</span>
-                      <span className="text-indigo-700">{fmt(customInsts.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0))}</span>
-                    </div>
-                  </div>
-                ) : (
-                  /* Divisão manual simples */
-                  <div className="space-y-2">
-                    <div className="grid grid-cols-3 gap-2">
-                      <div>
-                        <label className="block text-[10px] font-semibold text-gray-500 mb-1">Valor total</label>
-                        <input value={payForm.totalAmount} onChange={e => setPay("totalAmount", e.target.value)}
-                          placeholder="0,00" type="number" step="0.01"
-                          className="w-full border border-indigo-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-semibold text-gray-500 mb-1">Parcelas</label>
-                        <input value={payForm.installments} onChange={e => setPay("installments", e.target.value)}
-                          type="number" min="1" max="60"
-                          className="w-full border border-indigo-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-semibold text-gray-500 mb-1">1ª em</label>
-                        <input type="date" value={payForm.firstDueDate} onChange={e => setPay("firstDueDate", e.target.value)}
-                          className="w-full border border-indigo-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white" />
-                      </div>
-                    </div>
-                    {payTotal > 0 && (
-                      <div className="bg-white border border-indigo-200 rounded-lg px-3 py-2 space-y-1">
-                        {Array.from({ length: payCount }, (_, i) => {
-                          const d = new Date(payForm.firstDueDate + "T12:00");
-                          d.setMonth(d.getMonth() + i);
-                          return (
-                            <div key={i} className="flex justify-between text-xs">
-                              <span className="text-gray-500">{i + 1}ª — {d.toLocaleDateString("pt-BR")}</span>
-                              <span className="font-semibold text-indigo-600">{fmt(payTotal / payCount)}</span>
-                            </div>
-                          );
-                        })}
-                        <div className="flex justify-between text-xs font-bold border-t border-indigo-100 pt-1">
-                          <span className="text-gray-600">Total</span>
-                          <span className="text-indigo-700">{fmt(payTotal)}</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <button onClick={handleAddPayment}
-                  disabled={savingPay || (customInsts.length > 0 ? !customInsts.some(i => parseFloat(i.amount) > 0) : !payTotal)}
-                  className="w-full py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-50" style={{ background: "#6366f1" }}>
-                  {savingPay ? "Salvando..." : "Salvar e enviar ao Financeiro"}
-                </button>
+              <div className="mb-4 p-4 bg-indigo-50 border border-indigo-200 rounded-xl">
+                <AlunoPaymentForm
+                  aluno={aluno}
+                  plans={plans}
+                  onSaved={sale => { setSales(prev => [sale, ...prev]); setShowPayForm(false); }}
+                  onCancel={() => setShowPayForm(false)}
+                />
               </div>
             )}
 
@@ -796,36 +1176,155 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm }: {
                 return (
                   <div key={sale.id} className="mb-3 bg-gray-50 rounded-xl p-3">
                     <div className="flex justify-between items-start mb-2">
-                      <div>
+                      <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-gray-800">{sale.description}</p>
                         <p className="text-xs text-gray-400">{sale.paymentMethod} · {pagas}/{sale.installmentsCount} pagas</p>
                       </div>
-                      <p className="text-sm font-bold text-gray-600">{fmt(sale.totalAmount)}</p>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <p className="text-sm font-bold text-gray-600">{fmt(sale.totalAmount)}</p>
+                        <button
+                          onClick={async () => {
+                            if (!confirm(`Remover "${sale.description}" e todas as parcelas?`)) return;
+                            await fetch(`/api/financeiro/vendas/${sale.id}`, { method: "DELETE" });
+                            setSales(prev => prev.filter(s => s.id !== sale.id));
+                          }}
+                          className="p-1 rounded hover:bg-red-100 text-gray-300 hover:text-red-400 transition-colors">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex gap-1 flex-wrap">
+                    <div className="space-y-1 mt-1">
                       {sale.installments.sort((a, b) => a.number - b.number).map(inst => {
                         const isPago = inst.status === "pago";
                         const isVencida = !isPago && new Date(inst.dueDate) < new Date();
                         return (
-                          <button key={inst.id}
-                            onClick={() => toggleInstallment(sale.id, inst.id, inst.status)}
-                            title={`Parcela ${inst.number} — ${fmtDate(inst.dueDate)} — clique para ${isPago ? "desmarcar" : "marcar como paga"}`}
-                            className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full transition-all hover:scale-105 ${
-                              isPago ? "bg-green-100 text-green-700 hover:bg-green-200"
-                              : isVencida ? "bg-red-100 text-red-600 hover:bg-red-200"
-                              : "bg-gray-200 text-gray-500 hover:bg-gray-300"
-                            }`}>
-                            {inst.number}x {fmt(inst.amount)}
-                          </button>
+                          <div key={inst.id} className={`flex items-center gap-2 rounded-lg px-2 py-1.5 border text-xs ${
+                            isPago ? "bg-green-50 border-green-200"
+                            : isVencida ? "bg-red-50 border-red-200"
+                            : "bg-gray-50 border-gray-200"
+                          }`}>
+                            <button
+                              onClick={() => toggleInstallment(sale.id, inst.id, inst.status)}
+                              className={`shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
+                                isPago ? "bg-green-500 border-green-500 text-white"
+                                : isVencida ? "border-red-400 hover:bg-red-100"
+                                : "border-gray-300 hover:bg-gray-100"
+                              }`}
+                              title={isPago ? "Desmarcar" : "Marcar como paga"}>
+                              {isPago && <span className="text-[8px] font-bold">✓</span>}
+                            </button>
+                            <span className={`font-semibold shrink-0 ${isPago ? "text-green-700" : isVencida ? "text-red-600" : "text-gray-700"}`}>
+                              {inst.label || `${inst.number}ª`} — {fmt(inst.amount)}
+                            </span>
+                            <input
+                              type="date"
+                              defaultValue={inst.dueDate.slice(0, 10)}
+                              onBlur={e => {
+                                if (e.target.value && e.target.value !== inst.dueDate.slice(0, 10)) {
+                                  patchInstallment(sale.id, inst.id, { dueDate: e.target.value });
+                                }
+                              }}
+                              className="ml-auto text-[10px] border-0 bg-transparent text-gray-400 focus:outline-none focus:text-gray-700 cursor-pointer w-24 text-right"
+                            />
+                          </div>
                         );
                       })}
                     </div>
-                    <p className="text-[10px] text-gray-400 mt-1.5">Clique na parcela para marcar como paga</p>
+                    <p className="text-[10px] text-gray-400 mt-1.5">Clique no círculo para marcar como paga · edite a data direto no campo</p>
                   </div>
                 );
               })
             }
           </div>
+          </>)} {/* end drawerTab === "info" */}
+
+          {/* ── Tab: Tarefas ──────────────────── */}
+          {drawerTab === "tarefas" && (
+            <div className="px-5 py-4">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[11px] font-bold text-gray-400 uppercase flex items-center gap-1.5">
+                  <ListChecks className="w-3.5 h-3.5" /> Tarefas vinculadas
+                </span>
+                <a href="/tarefas" className="text-xs text-indigo-600 flex items-center gap-1 hover:underline">
+                  Gerenciar <ArrowRight className="w-3 h-3" />
+                </a>
+              </div>
+              {tasks.length === 0 ? (
+                <div className="text-center py-6">
+                  <Check className="w-6 h-6 text-green-400 mx-auto mb-2" />
+                  <p className="text-xs text-gray-400">Nenhuma tarefa pendente para este aluno.</p>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {tasks.map(task => {
+                    const isOverdueTask = task.dueDate && new Date(task.dueDate) < new Date();
+                    return (
+                      <div key={task.id} className={`flex items-start gap-2 p-2.5 rounded-xl border ${
+                        isOverdueTask ? "bg-red-50 border-red-100" : "bg-gray-50 border-gray-100"
+                      }`}>
+                        <Circle className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${isOverdueTask ? "text-red-400" : "text-gray-300"}`} />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1">
+                            {task.urgent && <Zap className="w-3 h-3 text-red-500 shrink-0" />}
+                            {!task.urgent && task.important && <Star className="w-3 h-3 text-amber-500 shrink-0" />}
+                            <p className="text-sm text-gray-800 truncate">{task.title}</p>
+                          </div>
+                          {task.dueDate && (
+                            <p className={`text-xs mt-0.5 ${isOverdueTask ? "text-red-500" : "text-gray-400"}`}>
+                              {isOverdueTask ? "Atrasada · " : ""}{fmtDate(task.dueDate)}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Tab: Observações ──────────────── */}
+          {drawerTab === "obs" && (
+            <div className="px-5 py-4">
+              <span className="text-[11px] font-bold text-gray-400 uppercase flex items-center gap-1.5 mb-3">
+                <MessageSquare className="w-3.5 h-3.5" /> Observações rápidas
+              </span>
+
+              {/* Quick note input */}
+              <div className="flex gap-2 mb-4">
+                <input
+                  value={newObsText}
+                  onChange={e => setNewObsText(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSaveObs(); } }}
+                  placeholder="Adicionar observação… (Enter para salvar)"
+                  className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400"
+                />
+                <button
+                  onClick={handleSaveObs}
+                  disabled={savingObs || !newObsText.trim()}
+                  className="px-3 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-50 transition-colors"
+                  style={{ background: "#6366f1" }}
+                >
+                  {savingObs ? "..." : "Salvar"}
+                </button>
+              </div>
+
+              {observacoes.length === 0 ? (
+                <p className="text-xs text-gray-400 text-center py-4">Nenhuma observação registrada.</p>
+              ) : (
+                <div className="space-y-2">
+                  {observacoes.map(obs => (
+                    <div key={obs.id} className="bg-gray-50 rounded-xl p-3 border border-gray-100">
+                      <p className="text-sm text-gray-700 leading-relaxed">{obs.content}</p>
+                      <p className="text-[10px] text-gray-400 mt-1">
+                        {new Date(obs.date).toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="px-5 py-4 border-t border-gray-100 shrink-0">
@@ -852,6 +1351,13 @@ export default function AlunosPage() {
   const [showImport, setShowImport] = useState(false);
   const [selected, setSelected] = useState<Aluno | null>(null);
   const [autoOpenPay, setAutoOpenPay] = useState(false);
+  const [plans, setPlans] = useState<ServicePlan[]>([]);
+
+  useEffect(() => {
+    fetch("/api/configuracoes/planos").then(r => r.json()).then(data => {
+      setPlans(Array.isArray(data) ? data.filter((p: ServicePlan) => p.active) : []);
+    }).catch(() => {});
+  }, []);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -1058,7 +1564,7 @@ export default function AlunosPage() {
         )}
       </div>
 
-      {showNovo && <NovoAlunoModal onClose={() => setShowNovo(false)} onSave={a => {
+      {showNovo && <NovoAlunoModal plans={plans} onClose={() => setShowNovo(false)} onSave={a => {
         setAlunos(prev => [...prev, a].sort((x, y) => x.name.localeCompare(y.name)));
         setShowNovo(false);
         setSelected(a);
@@ -1066,7 +1572,7 @@ export default function AlunosPage() {
       }} />}
       {showImport && <ImportModal onClose={() => setShowImport(false)} onImport={() => { setShowImport(false); load(); }} />}
       {selected && (
-        <AlunoDrawer aluno={selected} autoOpenPayForm={autoOpenPay}
+        <AlunoDrawer aluno={selected} autoOpenPayForm={autoOpenPay} plans={plans}
           onClose={() => { setSelected(null); setAutoOpenPay(false); }}
           onUpdate={a => { setAlunos(prev => prev.map(x => x.id === a.id ? a : x)); setSelected(a); }}
           onDelete={id => { setAlunos(prev => prev.filter(x => x.id !== id)); setSelected(null); setAutoOpenPay(false); }} />

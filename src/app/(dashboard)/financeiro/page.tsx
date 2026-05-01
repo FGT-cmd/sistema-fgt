@@ -2,10 +2,10 @@
 
 import { useState, useEffect, useRef, Fragment } from "react";
 import {
-  ChevronLeft, ChevronRight, Plus, Trash2, Check, Upload,
+  ChevronLeft, ChevronRight, Plus, Trash2, Check, Upload, RefreshCw,
   TrendingUp, TrendingDown, Wallet, Target, X, ChevronDown,
   LayoutGrid, CreditCard, Receipt, ListChecks, AlertCircle,
-  CheckCircle2, Clock, Users, DollarSign,
+  CheckCircle2, Clock, Users, DollarSign, Loader2,
 } from "lucide-react";
 
 // ─── Types ───────────────────────────────────────────────────────
@@ -22,6 +22,9 @@ type Tx = {
   notes?: string | null;
   clientId?: string | null;
   client?: { id: string; name: string } | null;
+  // campos internos para txs virtuais vindas de parcelas de alunos
+  _saleId?: string;
+  _installmentId?: string;
 };
 
 type Installment = {
@@ -41,6 +44,10 @@ type Sale = {
   installmentsCount: number;
   negotiationNotes?: string | null;
   paymentMethod?: string | null;
+  negotiationType?: string | null;
+  grossValue?: number | null;
+  netValue?: number | null;
+  cashFlowDate?: string | null;
   status: string;
   clientId: string;
   createdAt: string;
@@ -52,7 +59,7 @@ type Client = { id: string; name: string };
 
 // ─── Constants ───────────────────────────────────────────────────
 const EXPENSE_CATS = ["Ferramenta/Software", "Marketing", "Operação", "Imposto", "Equipe/Serviço", "Despesas Gerais"];
-const INCOME_CATS  = ["Trimestral", "Semestral", "Anual", "Personalizado", "Renovação", "Parcela", "Extra"];
+const INCOME_CATS  = ["Parcela", "Caixa", "Faturamento", "Mensalidade", "Trimestral", "Semestral", "Anual", "Personalizado", "Renovação", "Extra"];
 const PAYMENT_METHODS = ["Pix", "Débito", "Crédito", "Transferência", "Boleto", "Dinheiro"];
 const STATUSES_RECEITA = [
   { value: "previsto",  label: "PREVISTO" },
@@ -702,11 +709,12 @@ function Faturamento({ txs, sales, clients, onToggle, onDelete, onAddTx, onAddSa
 }
 
 // ─── Tab: Parcelas a Receber ──────────────────────────────────────
-function ParcelasReceber({ sales, clients, onToggleParcela, onAddSale }: {
+function ParcelasReceber({ sales, clients, onToggleParcela, onAddSale, onDeleteSale }: {
   sales: Sale[];
   clients: Client[];
   onToggleParcela: (saleId: string, parcelaId: string, status: string) => void;
   onAddSale: (sale: Sale) => void;
+  onDeleteSale: (saleId: string) => void;
 }) {
   const [showModal, setShowModal] = useState(false);
   const [filter, setFilter] = useState<"todas"|"pendente"|"pago">("todas");
@@ -815,6 +823,11 @@ function ParcelasReceber({ sales, clients, onToggleParcela, onAddSale }: {
                   <p className="text-xs font-semibold text-green-600">{fmt(paidAmount)} <span className="text-gray-300">/ {fmt(sale.totalAmount)}</span></p>
                 </div>
                 <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform shrink-0 ${isExpanded ? "rotate-180" : ""}`}/>
+                <button
+                  onClick={e => { e.stopPropagation(); if (confirm(`Remover venda "${sale.description}" e todas as parcelas?`)) onDeleteSale(sale.id); }}
+                  className="p-1.5 rounded-lg hover:bg-red-50 text-gray-300 hover:text-red-400 transition-colors shrink-0">
+                  <Trash2 className="w-4 h-4"/>
+                </button>
               </div>
 
               {/* Installments grid */}
@@ -1071,6 +1084,32 @@ function FluxoCaixa({ txs, monthDate, clients, onAdd, onToggle, onDelete }: {
   );
 }
 
+// ─── Alert types ──────────────────────────────────────────────────
+type AlertInstallment = {
+  id: string;
+  amount: number;
+  dueDate: string;
+  label?: string | null;
+  status: string;
+  sale: { id: string; description: string; client: { id: string; name: string } };
+};
+type AlertEndingSoon = {
+  saleId: string;
+  description: string;
+  lastDueDate: string;
+  client: { id: string; name: string };
+};
+type AlertNoPayment = { id: string; name: string };
+type AlertCounts = { overdue: number; today: number; endingSoon: number; noRecentPayment: number };
+
+type FinAlerts = {
+  overdueInstallments: AlertInstallment[];
+  todayInstallments: AlertInstallment[];
+  endingSoon: AlertEndingSoon[];
+  noRecentPayment: AlertNoPayment[];
+  counts: AlertCounts;
+};
+
 // ─── Main page ────────────────────────────────────────────────────
 export default function FinanceiroPage() {
   const today = new Date();
@@ -1082,29 +1121,134 @@ export default function FinanceiroPage() {
   const [loading, setLoading]     = useState(true);
   const [showExtrato, setShowExtrato] = useState(false);
   const [saldoInicial, setSaldoInicial] = useState("");
+  const [alerts, setAlerts]       = useState<FinAlerts | null>(null);
+  const [creatingTasks, setCreatingTasks] = useState(false);
+  const [alertsCollapsed, setAlertsCollapsed] = useState(false);
 
-  useEffect(() => {
+  async function loadData() {
     setLoading(true);
     async function safeJson(r: Response) {
       try { return await r.json(); } catch (_e) { return null; }
     }
-    Promise.all([
+    const [txData, salesData, clientData, alertsData] = await Promise.all([
       fetch("/api/financeiro/lancamentos").then(safeJson),
       fetch("/api/financeiro/vendas").then(safeJson),
       fetch("/api/alunos").then(safeJson),
-    ]).then(([txData, salesData, clientData]) => {
-      setTxs(Array.isArray(txData) ? txData : []);
-      setSales(Array.isArray(salesData) ? salesData : []);
-      setClients(Array.isArray(clientData) ? clientData.map((c: Client) => ({id:c.id,name:c.name})) : []);
-      setLoading(false);
-    });
-  }, []);
+      fetch("/api/financeiro/alertas").then(safeJson),
+    ]);
+    setTxs(Array.isArray(txData) ? txData : []);
+    setSales(Array.isArray(salesData) ? salesData : []);
+    setClients(Array.isArray(clientData) ? clientData.map((c: Client) => ({id:c.id,name:c.name})) : []);
+    if (alertsData && alertsData.counts) setAlerts(alertsData);
+    setLoading(false);
+  }
+
+  async function handleCreateCollectionTasks() {
+    setCreatingTasks(true);
+    const res = await fetch("/api/financeiro/alertas", { method: "POST" });
+    const data = await res.json();
+    setCreatingTasks(false);
+    if (data.created > 0) {
+      alert(`${data.created} tarefa${data.created > 1 ? "s" : ""} de cobrança criada${data.created > 1 ? "s" : ""} com sucesso.`);
+    } else {
+      alert("Nenhuma tarefa nova a criar (todas já existem ou não há cobranças pendentes).");
+    }
+  }
+
+  useEffect(() => { loadData(); }, []);
+
+  // ── Txs virtuais das parcelas de alunos ──────────────────────────
+  // Cada Installment vira um Tx "receita" virtual para aparecer no Fluxo de Caixa e Faturamento.
+  // Isso elimina a dependência de sincronização FinancialTx ↔ Installment.
+  const installmentIds = new Set(
+    txs.filter(t => (t as Tx & {installmentId?:string}).installmentId)
+       .map(t => (t as Tx & {installmentId?:string}).installmentId as string)
+  );
+
+  const installmentTxs: Tx[] = sales.flatMap(sale => {
+    const isCard = sale.negotiationType === "card";
+
+    // Para cartão: adiciona uma tx de faturamento separada (grossValue) além das txs de caixa
+    const txList: Tx[] = [];
+
+    if (isCard && sale.grossValue && !installmentIds.has(`rev_${sale.id}`)) {
+      // Tx de FATURAMENTO para cartão (valor bruto da venda)
+      txList.push({
+        id:            `rev_${sale.id}`,
+        type:          "receita" as const,
+        description:   `${sale.description} (faturamento)`,
+        amount:        sale.grossValue,
+        category:      "Faturamento",
+        status:        "pago",
+        dueDate:       sale.createdAt ?? null,
+        paidAt:        sale.createdAt ?? null,
+        paymentMethod: sale.paymentMethod ?? null,
+        notes:         null,
+        client:        sale.client,
+        _saleId:       sale.id,
+      });
+    }
+
+    // Txs de CAIXA = installments (para cartão usa netValue se disponível)
+    const instTxs: Tx[] = sale.installments
+      .filter(inst => !installmentIds.has(inst.id))
+      .map(inst => {
+        const cashAmount = (isCard && (inst as Installment & { netValue?: number | null }).netValue)
+          ? (inst as Installment & { netValue?: number | null }).netValue as number
+          : inst.amount;
+        const label = (inst as Installment & { label?: string | null }).label;
+        const suffix = label
+          ? ` — ${label}`
+          : sale.installmentsCount > 1
+            ? ` (${inst.number}/${sale.installmentsCount})`
+            : "";
+        return {
+          id:            `inst_${inst.id}`,
+          type:          "receita" as const,
+          description:   isCard
+            ? `${sale.description}${suffix} (caixa)`
+            : `${sale.description}${suffix}`,
+          amount:        cashAmount,
+          category:      isCard ? "Caixa" : "Parcela",
+          status:        inst.status,
+          dueDate:       inst.dueDate ?? null,
+          paidAt:        inst.paidAt ?? null,
+          paymentMethod: sale.paymentMethod ?? null,
+          notes:         null,
+          client:        sale.client,
+          _saleId:       sale.id,
+          _installmentId: inst.id,
+        };
+      });
+
+    return [...txList, ...instTxs];
+  });
+
+  // allTxs = FinancialTx reais + parcelas de alunos como txs virtuais
+  const allTxs: Tx[] = [...txs, ...installmentTxs];
 
   // ── Shared handlers ──
   function addTx(tx: Tx) { setTxs(prev => [...prev, tx]); }
   function addSale(sale: Sale) { setSales(prev => [sale, ...prev]); }
 
   async function toggleTx(id: string, status: string) {
+    // Tx virtual de parcela de aluno
+    if (id.startsWith("inst_")) {
+      const instId = id.replace("inst_", "");
+      const sale   = sales.find(s => s.installments.some(i => i.id === instId));
+      if (!sale) return;
+      const paidAt = status === "pago" ? new Date().toISOString() : null;
+      await fetch(`/api/financeiro/vendas/${sale.id}/parcelas/${instId}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      setSales(prev => prev.map(s => s.id === sale.id
+        ? { ...s, installments: s.installments.map(i => i.id === instId ? { ...i, status, paidAt } : i) }
+        : s
+      ));
+      return;
+    }
+    // FinancialTx real
     const res = await fetch(`/api/financeiro/lancamentos/${id}`, {
       method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify({status}),
     });
@@ -1113,23 +1257,37 @@ export default function FinanceiroPage() {
   }
 
   async function deleteTx(id: string) {
+    if (id.startsWith("inst_")) {
+      alert("Para remover parcelas de aluno, vá em Parcelas a Receber e exclua a venda.");
+      return;
+    }
     if (!confirm("Remover este lançamento?")) return;
-    await fetch(`/api/financeiro/lancamentos/${id}`, {method:"DELETE"});
+    const res = await fetch(`/api/financeiro/lancamentos/${id}`, {method:"DELETE"});
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || "Não foi possível remover este lançamento.");
+      return;
+    }
     setTxs(prev => prev.filter(t => t.id!==id));
   }
 
   async function toggleParcela(saleId: string, parcelaId: string, status: string) {
-    const res = await fetch(`/api/financeiro/vendas/${saleId}/parcelas/${parcelaId}`, {
+    const paidAt = status === "pago" ? new Date().toISOString() : null;
+    await fetch(`/api/financeiro/vendas/${saleId}/parcelas/${parcelaId}`, {
       method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify({status}),
     });
-    const updated = await res.json();
     setSales(prev => prev.map(s => s.id===saleId
-      ? {...s, installments: s.installments.map(i => i.id===parcelaId ? {...i,...updated} : i)}
+      ? {...s, installments: s.installments.map(i => i.id===parcelaId ? {...i, status, paidAt} : i)}
       : s));
   }
 
-  // ── Summary numbers ──
-  const monthTxs = txs.filter(t => inMonth(monthDate, t.dueDate) || inMonth(monthDate, t.paidAt));
+  async function deleteSale(saleId: string) {
+    await fetch(`/api/financeiro/vendas/${saleId}`, { method: "DELETE" });
+    setSales(prev => prev.filter(s => s.id !== saleId));
+  }
+
+  // ── Summary numbers (usa allTxs para incluir parcelas de alunos) ──
+  const monthTxs = allTxs.filter(t => inMonth(monthDate, t.dueDate) || inMonth(monthDate, t.paidAt));
   const realR = monthTxs.filter(t=>t.type==="receita"&&t.status==="pago").reduce((s,t)=>s+t.amount,0);
   const totalR= monthTxs.filter(t=>t.type==="receita").reduce((s,t)=>s+t.amount,0);
   const realD = monthTxs.filter(t=>t.type==="despesa"&&t.status==="pago").reduce((s,t)=>s+t.amount,0);
@@ -1167,6 +1325,11 @@ export default function FinanceiroPage() {
                   className="p-1 rounded hover:bg-gray-200 text-gray-400"><ChevronRight className="w-4 h-4"/></button>
               </div>
             )}
+            <button onClick={() => loadData()} disabled={loading}
+              className="p-2 rounded-xl border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-40"
+              title="Atualizar dados">
+              <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`}/>
+            </button>
             <button onClick={() => setShowExtrato(true)}
               className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white shadow-sm"
               style={{background:"#6366f1"}}>
@@ -1209,6 +1372,143 @@ export default function FinanceiroPage() {
           )}
         </div>
 
+        {/* ── Alertas financeiros ───────────────────── */}
+        {alerts && (alerts.counts.overdue + alerts.counts.today + alerts.counts.endingSoon + alerts.counts.noRecentPayment) > 0 && (
+          <div className="mb-3 border border-amber-200 rounded-xl overflow-hidden bg-amber-50">
+            {/* Alertas header */}
+            <button
+              onClick={() => setAlertsCollapsed(v => !v)}
+              className="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-amber-100 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-600" />
+                <span className="text-sm font-semibold text-amber-800">Alertas financeiros</span>
+                <div className="flex items-center gap-1.5">
+                  {alerts.counts.overdue > 0 && (
+                    <span className="text-xs bg-red-100 text-red-700 rounded-full px-2 py-0.5 font-medium">
+                      {alerts.counts.overdue} vencida{alerts.counts.overdue > 1 ? "s" : ""}
+                    </span>
+                  )}
+                  {alerts.counts.today > 0 && (
+                    <span className="text-xs bg-amber-200 text-amber-800 rounded-full px-2 py-0.5 font-medium">
+                      {alerts.counts.today} vence hoje
+                    </span>
+                  )}
+                  {alerts.counts.endingSoon > 0 && (
+                    <span className="text-xs bg-blue-100 text-blue-700 rounded-full px-2 py-0.5 font-medium">
+                      {alerts.counts.endingSoon} plano{alerts.counts.endingSoon > 1 ? "s" : ""} acabando
+                    </span>
+                  )}
+                  {alerts.counts.noRecentPayment > 0 && (
+                    <span className="text-xs bg-orange-100 text-orange-700 rounded-full px-2 py-0.5 font-medium">
+                      {alerts.counts.noRecentPayment} sem pagamento
+                    </span>
+                  )}
+                </div>
+              </div>
+              <ChevronDown className={`w-4 h-4 text-amber-600 transition-transform ${alertsCollapsed ? "-rotate-90" : ""}`} />
+            </button>
+
+            {/* Alertas body */}
+            {!alertsCollapsed && (
+              <div className="px-4 pb-3 space-y-3">
+                {/* Parcelas vencidas */}
+                {alerts.overdueInstallments.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-red-700 uppercase tracking-widest mb-1.5">
+                      Parcelas vencidas
+                    </p>
+                    <div className="space-y-1">
+                      {alerts.overdueInstallments.slice(0, 5).map((inst) => {
+                        const days = Math.floor((Date.now() - new Date(inst.dueDate).getTime()) / (1000*60*60*24));
+                        return (
+                          <div key={inst.id} className="flex items-center justify-between bg-white rounded-lg px-3 py-2 border border-red-100">
+                            <div>
+                              <span className="text-sm font-medium text-gray-800">{inst.sale.client.name}</span>
+                              <span className="text-xs text-red-500 ml-2">{days}d atraso</span>
+                            </div>
+                            <span className="text-sm font-semibold text-red-700">{fmt(inst.amount)}</span>
+                          </div>
+                        );
+                      })}
+                      {alerts.overdueInstallments.length > 5 && (
+                        <p className="text-xs text-red-400 pl-1">+ {alerts.overdueInstallments.length - 5} mais vencidas</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Vencendo hoje */}
+                {alerts.todayInstallments.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-amber-700 uppercase tracking-widest mb-1.5">
+                      Vencem hoje
+                    </p>
+                    <div className="space-y-1">
+                      {alerts.todayInstallments.map((inst) => (
+                        <div key={inst.id} className="flex items-center justify-between bg-white rounded-lg px-3 py-2 border border-amber-100">
+                          <span className="text-sm font-medium text-gray-800">{inst.sale.client.name}</span>
+                          <span className="text-sm font-semibold text-amber-700">{fmt(inst.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Planos acabando */}
+                {alerts.endingSoon.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-blue-700 uppercase tracking-widest mb-1.5">
+                      Planos acabando (próx. 30 dias)
+                    </p>
+                    <div className="space-y-1">
+                      {alerts.endingSoon.map((s) => (
+                        <div key={s.saleId} className="flex items-center justify-between bg-white rounded-lg px-3 py-2 border border-blue-100">
+                          <div>
+                            <span className="text-sm font-medium text-gray-800">{s.client.name}</span>
+                            <span className="text-xs text-blue-500 ml-2">{fmtDate(s.lastDueDate)}</span>
+                          </div>
+                          <span className="text-xs text-blue-600 font-medium">Renovar?</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Sem pagamento recente */}
+                {alerts.noRecentPayment.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-orange-700 uppercase tracking-widest mb-1.5">
+                      Ativos sem pagamento (60 dias)
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {alerts.noRecentPayment.map((c) => (
+                        <span key={c.id} className="text-xs bg-white border border-orange-200 text-orange-700 rounded-lg px-2 py-1">
+                          {c.name}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Ação: criar tarefas de cobrança */}
+                {alerts.counts.overdue > 0 && (
+                  <div className="pt-1 border-t border-amber-200">
+                    <button
+                      onClick={handleCreateCollectionTasks}
+                      disabled={creatingTasks}
+                      className="flex items-center gap-2 text-xs font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg px-3 py-2 transition-colors disabled:opacity-50"
+                    >
+                      {creatingTasks ? <Loader2 className="w-3 h-3 animate-spin" /> : <Users className="w-3 h-3" />}
+                      Criar tarefas de cobrança automáticas
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Tab nav */}
         <div className="flex gap-0 -mb-px">
           {TABS.map(t => (
@@ -1239,19 +1539,19 @@ export default function FinanceiroPage() {
         ) : (
           <>
             {tab === "fluxo" && (
-              <FluxoCaixa txs={txs} monthDate={monthDate} clients={clients}
+              <FluxoCaixa txs={allTxs} monthDate={monthDate} clients={clients}
                 onAdd={addTx} onToggle={toggleTx} onDelete={deleteTx}/>
             )}
             {tab === "pagar" && (
               <ContasPagar txs={txs} onToggle={toggleTx} onDelete={deleteTx} onAdd={addTx}/>
             )}
             {tab === "faturamento" && (
-              <Faturamento txs={txs} sales={sales} clients={clients} monthDate={monthDate}
+              <Faturamento txs={allTxs} sales={sales} clients={clients} monthDate={monthDate}
                 onToggle={toggleTx} onDelete={deleteTx} onAddTx={addTx} onAddSale={addSale}/>
             )}
             {tab === "parcelas" && (
               <ParcelasReceber sales={sales} clients={clients}
-                onToggleParcela={toggleParcela} onAddSale={addSale}/>
+                onToggleParcela={toggleParcela} onAddSale={addSale} onDeleteSale={deleteSale}/>
             )}
           </>
         )}

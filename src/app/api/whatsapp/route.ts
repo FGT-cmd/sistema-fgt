@@ -2,13 +2,24 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/prisma";
 import { getDefaultUser } from "@/lib/user";
+import {
+  getPendingSession, cancelPendingSession,
+  isConfirmation, isCancellation, updateEventStatus,
+} from "@/lib/whatsapp/session";
+import {
+  enrichBeforeConfirm, buildConfirmationMessage,
+  executeAction, executeQuery, findClientMatches,
+} from "@/lib/whatsapp/executor";
+import type { Intent, ExtractedData, ClassificationResult } from "@/lib/whatsapp/types";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const WHATSAPP_SECRET = process.env.WHATSAPP_SECRET;
+const WHATSAPP_SECRET   = process.env.WHATSAPP_SECRET;
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL;
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY;
 const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE;
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const GROQ_API_KEY      = process.env.GROQ_API_KEY;
+
+// ─── Mídia ────────────────────────────────────────────────────────
 
 async function getMediaBase64(messageData: Record<string, unknown>): Promise<string | null> {
   try {
@@ -18,25 +29,18 @@ async function getMediaBase64(messageData: Record<string, unknown>): Promise<str
       body: JSON.stringify({ message: messageData, convertToMp4: false }),
     });
     const data = await res.json();
-    console.log("[getMediaBase64] response:", JSON.stringify(data).slice(0, 200));
     return data.base64 || null;
-  } catch (err) {
-    console.error("[getMediaBase64] error:", err);
-    return null;
-  }
+  } catch { return null; }
 }
 
 async function transcribeAudio(base64: string): Promise<string> {
-  // Remove data URL prefix se existir
   const b64 = base64.includes(",") ? base64.split(",")[1] : base64;
   const buffer = Buffer.from(b64, "base64");
   const blob = new Blob([buffer], { type: "audio/ogg" });
-
   const formData = new FormData();
   formData.append("file", blob, "audio.ogg");
   formData.append("model", "whisper-large-v3");
   formData.append("language", "pt");
-
   const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
     method: "POST",
     headers: { "Authorization": `Bearer ${GROQ_API_KEY}` },
@@ -49,26 +53,76 @@ async function transcribeAudio(base64: string): Promise<string> {
 async function extractImageInfo(base64: string): Promise<string> {
   const b64 = base64.includes(",") ? base64.split(",")[1] : base64;
   const mediaType = base64.includes("png") ? "image/png" : "image/jpeg";
-
   const res = await anthropic.messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 512,
     messages: [{
       role: "user",
       content: [
-        {
-          type: "image",
-          source: { type: "base64", media_type: mediaType, data: b64 },
-        },
-        {
-          type: "text",
-          text: "Analise esta imagem. Se for um comprovante de pagamento, extraia: valor, data, nome/descrição, forma de pagamento. Se for outra coisa, descreva o que é. Responda em português, de forma curta e direta.",
-        },
+        { type: "image", source: { type: "base64", media_type: mediaType, data: b64 } },
+        { type: "text", text: "Analise esta imagem. Se for comprovante de pagamento, extraia: valor, data, descrição, forma de pagamento. Caso contrário, descreva o que é. Responda em português, de forma curta." },
       ],
     }],
   });
-  return (res.content[0] as { type: string; text: string }).text;
+  return (res.content[0] as { text: string }).text;
 }
+
+// ─── Classificação de intenção ────────────────────────────────────
+
+async function classifyIntent(
+  message: string,
+  clientList: string,
+  pendingTasksSummary: string,
+  today: string,
+): Promise<ClassificationResult> {
+  const systemPrompt = `Você é o assistente operacional do Fernando Gomes, consultor de fitness.
+Hoje é ${today}.
+
+ALUNOS/CLIENTES CADASTRADOS:
+${clientList || "Nenhum cadastrado"}
+
+RESUMO DE TAREFAS PENDENTES:
+${pendingTasksSummary || "Nenhuma"}
+
+Analise a mensagem e retorne APENAS um JSON válido (sem markdown) com:
+{
+  "action": "create_task" | "register_payment" | "list_tasks" | "day_summary" | "query_pending" | "create_expense" | "mark_paid" | "unknown",
+  "data": { ... campos conforme action ... },
+  "response": "resposta direta para queries/erros. VAZIO para create_task, register_payment, create_expense."
+}
+
+CAMPOS POR ACTION:
+- create_task: { "title": string, "dueDate"?: "YYYY-MM-DD", "studentName"?: string, "type"?: "general"|"student"|"financial"|"content"|"commercial"|"administrative" }
+- register_payment: { "studentName": string, "amount": number, "paymentMethod": "Pix"|"Dinheiro"|"Cartão"|"Transferência"|"Débito"|"Crédito", "date"?: "YYYY-MM-DD" }
+- query_pending: { "queryType": "who_didnt_pay" | "overdue" | "today" | "general" }
+- create_expense: { "description": string, "amount": number, "category": "Ferramenta/Software"|"Marketing"|"Operação"|"Imposto"|"Equipe/Serviço"|"Despesas Gerais", "dueDate"?: "YYYY-MM-DD" }
+- mark_paid: { "description": string }
+- list_tasks, day_summary, unknown: {}
+
+REGRAS:
+- Para create_task, register_payment, create_expense: deixe "response" VAZIO — o sistema gera a confirmação.
+- Para queries (list_tasks, day_summary, query_pending): preencha "response" com texto útil e amigável.
+- Datas naturais: hoje=${today}, amanhã=dia seguinte, "segunda"=próxima segunda, etc. → YYYY-MM-DD.
+- NUNCA invente ou corrija nomes. Use exatamente o que está escrito.
+- query_pending + "quem não pagou" → queryType: "who_didnt_pay"
+- query_pending + "atrasado/vencido" → queryType: "overdue"
+- query_pending + "hoje/dia" → queryType: "today"`;
+
+  const res = await anthropic.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 1024,
+    system: systemPrompt,
+    messages: [{ role: "user", content: message }],
+  });
+
+  const raw = (res.content[0] as { text: string }).text.trim();
+  const jsonMatch = raw.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error("Resposta Claude sem JSON válido");
+
+  return JSON.parse(jsonMatch[0]) as ClassificationResult;
+}
+
+// ─── Webhook principal ────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
   try {
@@ -78,179 +132,179 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const phone: string = body.phone || body.from || "";
+    const phone: string = body.phone || body.from || "test";
     const messageType: string = body.messageType || "text";
 
-    // Bloqueia grupos e números não autorizados
+    // Bloqueia grupos e broadcasts
     if (phone.includes("@g.us") || phone.includes("@broadcast")) {
       return NextResponse.json({ response: null }, { status: 200 });
     }
+
+    // Whitelist de telefone
     const ALLOWED_PHONE = process.env.ALLOWED_PHONE;
     if (ALLOWED_PHONE && !phone.includes(ALLOWED_PHONE)) {
       return NextResponse.json({ response: null }, { status: 200 });
     }
-    const messageObj: Record<string, unknown> = body.messageObj || {};
 
+    const messageObj: Record<string, unknown> = body.messageObj || {};
     let message: string = body.message || body.text || "";
 
-    // Processa áudio
+    // Processamento de áudio
     if (messageType === "audioMessage") {
       const base64 = await getMediaBase64(messageObj);
-      if (!base64) return NextResponse.json({ response: `[DEBUG áudio] messageObj recebido: ${JSON.stringify(messageObj).slice(0, 300)}` });
+      if (!base64) return NextResponse.json({ response: "Não consegui processar o áudio. Pode digitar?" });
       message = await transcribeAudio(base64);
       if (!message) return NextResponse.json({ response: "Não entendi o áudio. Pode repetir digitando?" });
     }
 
-    // Processa imagem
+    // Processamento de imagem
     if (messageType === "imageMessage") {
       const base64 = await getMediaBase64(messageObj);
-      if (!base64) return NextResponse.json({ response: `[DEBUG imagem] messageObj recebido: ${JSON.stringify(messageObj).slice(0, 300)}` });
+      if (!base64) return NextResponse.json({ response: "Não consegui ler a imagem." });
       const imageInfo = await extractImageInfo(base64);
       message = `[Imagem recebida] ${imageInfo}`;
     }
 
-    if (!message) return NextResponse.json({ response: "Não entendi a mensagem." });
+    if (!message.trim()) {
+      return NextResponse.json({ response: "Não entendi a mensagem." });
+    }
 
     const user = await getDefaultUser();
     const today = new Date().toISOString().slice(0, 10);
 
-    const [clients, pendingTasks, pendingFinancial] = await Promise.all([
-      prisma.client.findMany({ select: { id: true, name: true, phone: true }, orderBy: { name: "asc" } }),
+    // ── SESSÃO PENDENTE ─────────────────────────────────────────────
+    const pending = await getPendingSession(phone);
+
+    if (pending) {
+      if (isConfirmation(message)) {
+        // Executa ação confirmada
+        try {
+          const response = await executeAction(
+            pending.action,
+            pending.data,
+            pending.enriched ?? {},
+            user.id,
+          );
+          await updateEventStatus(pending.id, "executed", response);
+          return NextResponse.json({ response, action: pending.action, confirmed: true });
+        } catch (err) {
+          const errMsg = String(err);
+          await updateEventStatus(pending.id, "failed", undefined, errMsg);
+          return NextResponse.json({ response: "Erro ao executar. Tente novamente." });
+        }
+      }
+
+      if (isCancellation(message)) {
+        await updateEventStatus(pending.id, "cancelled", "Cancelado pelo usuário");
+        return NextResponse.json({ response: "Ok, cancelei. 👍 No que mais posso ajudar?", action: "cancel" });
+      }
+
+      // Mensagem não é confirmação nem cancelamento — cancela pendência e processa como nova
+      await cancelPendingSession(phone);
+    }
+
+    // ── NOVA MENSAGEM ───────────────────────────────────────────────
+
+    // Carrega contexto mínimo para Claude
+    const [clients, pendingTasks] = await Promise.all([
+      prisma.client.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } }),
       prisma.todoTask.findMany({
         where: { userId: user.id, status: "pending" },
         orderBy: { dueDate: "asc" },
         take: 20,
         include: { client: { select: { name: true } } },
       }),
-      prisma.financialTx.findMany({
-        where: { status: "pendente" },
-        orderBy: { dueDate: "asc" },
-        take: 10,
-      }),
     ]);
 
-    const clientList = clients.map(c => `${c.name} (id: ${c.id})`).join(", ");
-    const taskList = pendingTasks.map(t =>
-      `- ${t.title}${t.dueDate ? ` (vence: ${t.dueDate.toISOString().slice(0, 10)})` : ""}${t.client ? ` [${t.client.name}]` : ""}`
-    ).join("\n");
-    const financialList = pendingFinancial.map(f =>
-      `- ${f.description}: R$${f.amount}${f.dueDate ? ` (vence: ${f.dueDate.toISOString().slice(0, 10)})` : ""}`
-    ).join("\n");
+    const clientList = clients.map(c => c.name).join(", ");
+    const taskSummary = pendingTasks.length > 0
+      ? `${pendingTasks.length} pendentes. Próximas: ${pendingTasks.slice(0, 3).map(t => t.title).join(", ")}`
+      : "Nenhuma";
 
-    const systemPrompt = `Você é o assistente operacional do Fernando Gomes, consultor de fitness.
-Hoje é ${today}.
+    // Classifica intenção com Claude
+    let classification: ClassificationResult;
+    try {
+      classification = await classifyIntent(message, clientList, taskSummary, today);
+    } catch {
+      await prisma.whatsAppEvent.create({
+        data: { phone, rawContent: message, messageType, status: "failed", errorMessage: "Falha na classificação Claude", userId: user.id },
+      });
+      return NextResponse.json({ response: "Não consegui entender. Tente de novo com outras palavras." });
+    }
 
-ALUNOS/CLIENTES CADASTRADOS:
-${clientList || "Nenhum cadastrado"}
+    const { action, data, response: directResponse } = classification;
 
-TAREFAS PENDENTES:
-${taskList || "Nenhuma"}
+    // ── QUERIES DIRETAS (sem confirmação) ──────────────────────────
+    const directActions: Intent[] = ["list_tasks", "day_summary", "query_pending", "mark_paid", "unknown"];
 
-FINANCEIRO PENDENTE:
-${financialList || "Nenhum"}
+    if (directActions.includes(action)) {
+      let response: string;
 
-Analise a mensagem e retorne APENAS um JSON válido (sem markdown) com esta estrutura:
-{
-  "action": "create_task" | "list_tasks" | "day_summary" | "create_expense" | "mark_paid" | "pending_financial" | "unknown",
-  "data": { ... campos conforme a action ... },
-  "response": "mensagem amigável para responder no WhatsApp"
-}
+      if (action === "mark_paid" || action === "unknown") {
+        if (action === "mark_paid") {
+          try {
+            response = await executeAction(action, data, {}, user.id);
+          } catch {
+            response = directResponse || "Não consegui processar.";
+          }
+        } else {
+          response = directResponse || "Não entendi. Pode reformular?";
+        }
+      } else {
+        response = await executeQuery(action, data, user.id, { pendingTasks, today });
+      }
 
-AÇÕES E CAMPOS:
-- create_task: { "title": string, "description"?: string, "dueDate"?: "YYYY-MM-DD", "type": "general"|"student"|"financial"|"content"|"administrative", "clientId"?: string }
-- list_tasks: {} (lista as tarefas pendentes)
-- day_summary: {} (resumo do dia)
-- create_expense: { "description": string, "amount": number, "category": "Pessoal"|"Ferramentas e Plataformas"|"Marketing"|"Impostos"|"Outros", "dueDate"?: "YYYY-MM-DD" }
-- mark_paid: { "description": string } (marca pagamento como recebido pelo nome)
-- pending_financial: {} (lista pendências financeiras)
-- unknown: {} (quando não entender)
+      await prisma.whatsAppEvent.create({
+        data: {
+          phone, rawContent: message, messageType,
+          interpretedIntent: action,
+          extractedData: data as object,
+          status: "executed",
+          response,
+          userId: user.id,
+        },
+      });
 
-REGRAS CRÍTICAS:
-- NUNCA invente, altere ou substitua nomes mencionados na mensagem. Use EXATAMENTE o nome que está escrito.
-- NUNCA complete ou corrija nomes — se a pessoa escreveu "Marla Knod", use "Marla Knod", não invente outro nome.
-- Entenda datas naturais: "hoje", "amanhã", "sexta", etc. Converta para YYYY-MM-DD.
-- Se mencionar nome de aluno cadastrado, tente vincular ao clientId correto comparando com a lista acima.
-- Seja direto e amigável, use emojis com moderação.
-- Confirme a ação na response mostrando exatamente o que vai salvar.`;
+      return NextResponse.json({ response, action });
+    }
 
-    const aiResponse = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 1024,
-      messages: [{ role: "user", content: message }],
-      system: systemPrompt,
+    // ── AÇÕES COM CONFIRMAÇÃO (create_task, register_payment, create_expense) ──
+    const enrichResult = await enrichBeforeConfirm(action, data, user.id);
+
+    // Se enrich retornou mensagem direta (ambiguidade, não encontrado sem vínculo)
+    if (!enrichResult.valid) {
+      await prisma.whatsAppEvent.create({
+        data: {
+          phone, rawContent: message, messageType,
+          interpretedIntent: action,
+          status: "failed",
+          response: enrichResult.message,
+          userId: user.id,
+        },
+      });
+      return NextResponse.json({ response: enrichResult.message, action });
+    }
+
+    const confirmationMsg = buildConfirmationMessage(action, data, enrichResult.enriched ?? {});
+
+    // Salva evento com status waiting_confirmation e dados para execução posterior
+    const event = await prisma.whatsAppEvent.create({
+      data: {
+        phone, rawContent: message, messageType,
+        interpretedIntent: action,
+        extractedData: { action, data, enriched: enrichResult.enriched } as object,
+        status: "waiting_confirmation",
+        userId: user.id,
+      },
     });
 
-    const raw = (aiResponse.content[0] as { type: string; text: string }).text.trim();
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return NextResponse.json({ response: "Não consegui processar sua mensagem. Tente de novo." });
+    return NextResponse.json({
+      response: confirmationMsg,
+      action,
+      pendingEventId: event.id,
+      waitingConfirmation: true,
+    });
 
-    const parsed = JSON.parse(jsonMatch[0]);
-    const { action, data } = parsed;
-    let finalResponse = parsed.response;
-
-    if (action === "create_task") {
-      await prisma.todoTask.create({
-        data: {
-          title: data.title,
-          description: data.description || null,
-          dueDate: data.dueDate ? new Date(data.dueDate) : null,
-          type: data.type || "general",
-          source: "whatsapp",
-          status: "pending",
-          userId: user.id,
-          clientId: data.clientId || null,
-        },
-      });
-    }
-
-    if (action === "create_expense") {
-      await prisma.financialTx.create({
-        data: {
-          type: "despesa",
-          description: data.description,
-          amount: data.amount,
-          category: data.category || "Outros",
-          status: "pendente",
-          dueDate: data.dueDate ? new Date(data.dueDate) : null,
-        },
-      });
-    }
-
-    if (action === "mark_paid") {
-      const tx = await prisma.financialTx.findFirst({
-        where: { status: "pendente", description: { contains: data.description, mode: "insensitive" } },
-      });
-      if (tx) {
-        await prisma.financialTx.update({ where: { id: tx.id }, data: { status: "pago", paidAt: new Date() } });
-        finalResponse = `✅ Pagamento de *${tx.description}* (R$${tx.amount}) marcado como recebido!`;
-      } else {
-        finalResponse = `Não encontrei nenhum lançamento pendente com esse nome.`;
-      }
-    }
-
-    if (action === "list_tasks") {
-      finalResponse = pendingTasks.length === 0
-        ? "Você não tem tarefas pendentes! 🎉"
-        : `📋 *Tarefas pendentes (${pendingTasks.length}):*\n${taskList}`;
-    }
-
-    if (action === "pending_financial") {
-      finalResponse = pendingFinancial.length === 0
-        ? "Nenhuma pendência financeira! 💰"
-        : `💰 *Pendências financeiras:*\n${financialList}`;
-    }
-
-    if (action === "day_summary") {
-      const todayTasks = pendingTasks.filter(t => t.dueDate && t.dueDate.toISOString().slice(0, 10) === today);
-      const overdue = pendingTasks.filter(t => t.dueDate && t.dueDate.toISOString().slice(0, 10) < today);
-      finalResponse = `☀️ *Resumo do dia (${today}):*\n\n` +
-        `📋 Tarefas para hoje: ${todayTasks.length}\n` +
-        (todayTasks.map(t => `  • ${t.title}`).join("\n") || "") +
-        (overdue.length > 0 ? `\n\n⚠️ Atrasadas: ${overdue.length}\n${overdue.map(t => `  • ${t.title}`).join("\n")}` : "") +
-        `\n\n💰 Pendências financeiras: ${pendingFinancial.length}`;
-    }
-
-    return NextResponse.json({ response: finalResponse, action });
   } catch (err) {
     console.error("[POST /api/whatsapp]", err);
     return NextResponse.json({ response: "Erro interno. Tente novamente." }, { status: 500 });

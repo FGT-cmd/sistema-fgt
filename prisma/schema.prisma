@@ -21,17 +21,20 @@ model User {
   googleRefreshToken String?
   googleTokenExpiry  DateTime?
 
-  accounts       Account[]
-  sessions       Session[]
-  clients        Client[]
-  deals          Deal[]
-  tasks          Task[]
-  todoTasks      TodoTask[]
-  interactions   Interaction[]
-  calendarEvents CalendarEvent[]
-  followUpSeqs   FollowUpSeq[]
-  monthlyGoals   MonthlyGoal[]
-  servicePlans   ServicePlan[]
+  accounts         Account[]
+  sessions         Session[]
+  clients          Client[]
+  deals            Deal[]
+  tasks            Task[]
+  todoTasks        TodoTask[]
+  interactions     Interaction[]
+  calendarEvents   CalendarEvent[]
+  followUpSeqs     FollowUpSeq[]
+  monthlyGoals     MonthlyGoal[]
+  servicePlans     ServicePlan[]
+  whatsAppEvents   WhatsAppEvent[]
+  openClawEvents   OpenClawEvent[]
+  contentIdeas     ContentIdea[]
 }
 
 model Account {
@@ -157,10 +160,12 @@ model FinancialTx {
   recurring     Boolean   @default(false)
   recurringDay  Int?
   clientId      String?
+  installmentId String?   @unique
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  client Client? @relation(fields: [clientId], references: [id])
+  client      Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  installment Installment? @relation(fields: [installmentId], references: [id], onDelete: Cascade)
 }
 
 model Invoice {
@@ -174,7 +179,7 @@ model Invoice {
   clientId    String
   createdAt   DateTime  @default(now())
 
-  client Client @relation(fields: [clientId], references: [id])
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 }
 
 model Contract {
@@ -188,22 +193,29 @@ model Contract {
   clientId   String
   createdAt  DateTime  @default(now())
 
-  client Client @relation(fields: [clientId], references: [id])
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
 }
 
 model Sale {
-  id                String   @id @default(cuid())
+  id                String    @id @default(cuid())
   description       String
   totalAmount       Float
-  installmentsCount Int      @default(1)
+  installmentsCount Int       @default(1)
   negotiationNotes  String?
   paymentMethod     String?
-  status            String   @default("ativo")
+  status            String    @default("ativo")
   clientId          String
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  // Negociação estruturada
+  negotiationType   String?   // "cash" | "pix" | "card" | "custom"
+  servicePlanId     String?   // plano vinculado (opcional)
+  grossValue        Float?    // valor bruto da venda (faturamento) — usado no cartão
+  netValue          Float?    // valor líquido recebido (caixa) — usado no cartão com antecipação
+  cashFlowDate      DateTime? // data real de entrada no caixa (cartão antecipado)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
-  client       Client        @relation(fields: [clientId], references: [id])
+  client       Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  servicePlan  ServicePlan? @relation(fields: [servicePlanId], references: [id], onDelete: SetNull)
   installments Installment[]
 }
 
@@ -211,13 +223,16 @@ model Installment {
   id       String    @id @default(cuid())
   number   Int
   amount   Float
+  netValue Float?    // valor líquido após taxas (cartão)
   dueDate  DateTime
   paidAt   DateTime?
   status   String    @default("pendente")
+  label    String?   // rótulo livre: "Entrada", "1ª parcela", etc.
   notes    String?
   saleId   String
 
-  sale Sale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  sale        Sale         @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  financialTx FinancialTx?
 }
 
 model StudentFile {
@@ -409,7 +424,8 @@ model ServicePlan {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id])
+  user  User   @relation(fields: [userId], references: [id])
+  sales Sale[]
 }
 
 // Metas Mensais
@@ -516,4 +532,59 @@ model Subtask {
   updatedAt DateTime @updatedAt
 
   task TodoTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+}
+
+// WhatsApp Assistant
+// status: received | waiting_confirmation | executed | failed | cancelled
+model WhatsAppEvent {
+  id                String   @id @default(cuid())
+  phone             String   @default("test")
+  rawContent        String
+  messageType       String   @default("text")
+  interpretedIntent String?
+  extractedData     Json?
+  status            String   @default("received")
+  response          String?
+  errorMessage      String?
+  userId            String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+// OpenClaw Assistant
+// executionStatus: received | interpreted | waiting_confirmation | executed | failed | cancelled
+model OpenClawEvent {
+  id                  String   @id @default(cuid())
+  chatId              String   @default("test")
+  source              String   @default("telegram")  // telegram | test | api
+  rawCommand          String
+  interpretedIntent   String?
+  extractedData       Json?
+  confirmationPayload Json?
+  executionStatus     String   @default("received")
+  response            String?
+  errorMessage        String?
+  userId              String
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+// Banco de ideias de conteúdo
+// status: idea | roteiro | gravado | postado
+model ContentIdea {
+  id              String   @id @default(cuid())
+  rawIdea         String
+  suggestedFormat String?  // reels | stories | carrossel | podcast
+  hook            String?
+  status          String   @default("idea")
+  tags            String[]
+  userId          String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
 }

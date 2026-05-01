@@ -8,9 +8,13 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const status = searchParams.get("status");
 
+    const clientId = searchParams.get("clientId");
     const where: Record<string, unknown> = { userId: user.id };
     if (status && status !== "all") {
       where.status = status;
+    }
+    if (clientId) {
+      where.clientId = clientId;
     }
 
     const tasks = await prisma.todoTask.findMany({

@@ -26,15 +26,16 @@ const primaryNav = [
 
 // Secondary modules
 const secondaryNav = [
-  { href: "/crm",       icon: FolderKanban,  label: "CRM" },
-  { href: "/agenda",    icon: Calendar,      label: "Agenda" },
-  { href: "/projetos",  icon: FolderOpen,    label: "Projetos" },
+  { href: "/crm",        icon: FolderKanban,  label: "CRM" },
+  { href: "/agenda",     icon: Calendar,      label: "Agenda" },
+  { href: "/projetos",   icon: FolderOpen,    label: "Projetos" },
+  { href: "/whatsapp",   icon: MessageCircle, label: "WhatsApp" },
+  { href: "/openclaw",   icon: Lightbulb,     label: "OpenClaw" },
 ];
 
 // Coming soon (greyed out, no href)
 const comingSoon = [
-  { icon: MessageCircle, label: "WhatsApp" },
-  { icon: Lightbulb,     label: "Ideias" },
+  { icon: Lightbulb, label: "Ideias" },
 ];
 
 function NavItem({ href, icon: Icon, label, active }: {

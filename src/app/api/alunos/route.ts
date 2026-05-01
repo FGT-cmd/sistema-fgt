@@ -41,33 +41,6 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // Cria venda + parcelas se valor informado
-    if (body.totalAmount && parseFloat(body.totalAmount) > 0) {
-      const total        = parseFloat(body.totalAmount);
-      const installments = parseInt(body.installments) || 1;
-      const firstDue     = body.firstDueDate ? new Date(body.firstDueDate) : new Date();
-      const perParcela   = total / installments;
-
-      const sale = await prisma.sale.create({
-        data: {
-          clientId:          client.id,
-          description:       body.planName || "Plano",
-          totalAmount:       total,
-          installmentsCount: installments,
-          paymentMethod:     body.paymentMethod || null,
-          status:            "ativo",
-        },
-      });
-
-      const installmentData = Array.from({ length: installments }, (_, i) => {
-        const d = new Date(firstDue);
-        d.setMonth(d.getMonth() + i);
-        return { saleId: sale.id, number: i + 1, amount: perParcela, dueDate: d, status: "pendente" as const };
-      });
-
-      await prisma.installment.createMany({ data: installmentData });
-    }
-
     const result = await prisma.client.findUnique({
       where: { id: client.id },
       include: {

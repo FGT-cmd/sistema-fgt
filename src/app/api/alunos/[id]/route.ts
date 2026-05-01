@@ -55,6 +55,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
+    // onDelete: Cascade no schema garante que Sales → Installments → FinancialTx são deletados
     await prisma.client.delete({ where: { id } });
     return NextResponse.json({ ok: true });
   } catch (err) {

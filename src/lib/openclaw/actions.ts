@@ -9,6 +9,7 @@ import { findClientMatches } from "@/lib/whatsapp/executor";
 import type {
   OCCreateStudentData, OCRegisterPaymentData, OCCreateTaskData,
   OCAddStudentNoteData, OCSaveContentIdeaData, OCEnriched, OCQueryType,
+  OCQueryCRMData, OCCreateLeadData,
 } from "./types";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -77,6 +78,36 @@ export async function getDailyPendingSummary(userId: string, queryType: OCQueryT
     }
     if (tasks.length === 0 && payments.length === 0) r = "Nada em atraso! ✅";
     return r.trim();
+  }
+
+  if (queryType === "attention") {
+    const clients = await prisma.client.findMany({
+      where: {
+        userId,
+        sales: { some: { installments: { some: { status: { not: "pago" }, dueDate: { lt: todayStart } } } } },
+      },
+      select: {
+        name: true,
+        sales: {
+          select: {
+            installments: {
+              where: { status: { not: "pago" }, dueDate: { lt: todayStart } },
+              select: { amount: true, dueDate: true },
+            },
+          },
+        },
+      },
+      orderBy: { name: "asc" },
+    });
+    if (clients.length === 0) return "Nenhum aluno em situação de atenção no momento. ✅";
+    const list = clients.map(c => {
+      const allInstallments = c.sales.flatMap(s => s.installments);
+      const total = allInstallments.reduce((sum, i) => sum + i.amount, 0);
+      const oldest = allInstallments.sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime())[0];
+      const daysLate = Math.floor((today.getTime() - oldest.dueDate.getTime()) / (1000 * 60 * 60 * 24));
+      return `• *${c.name}* — ${fmt(total)} (${allInstallments.length} parcela${allInstallments.length > 1 ? "s" : ""} · ${daysLate}d em atraso)`;
+    }).join("\n");
+    return `🔴 *Alunos em atenção (${clients.length}):*\n\n${list}`;
   }
 
   if (queryType === "today") {
@@ -457,4 +488,120 @@ export async function saveContentIdea(
 
   const formatEmoji = { reels: "🎬", stories: "📱", carrossel: "🎠" }[enriched.suggestedFormat || "reels"] ?? "💡";
   return `✅ Ideia salva!\n\n${formatEmoji} Formato: *${enriched.suggestedFormat}*\n💬 Gancho: _"${enriched.hook}"_\n\n_"${data.idea}"_`;
+}
+
+// ─── 10. queryCRM ─────────────────────────────────────────────────
+
+export async function queryCRM(userId: string, queryType: OCQueryCRMData["queryType"]): Promise<string> {
+  const now = new Date();
+
+  if (queryType === "pipeline") {
+    const deals = await prisma.deal.findMany({
+      where: { userId },
+      include: { client: { select: { name: true } } },
+      orderBy: { createdAt: "desc" },
+    });
+    if (deals.length === 0) return "Nenhum lead no pipeline. 📭";
+    const byStage = new Map<string, number>();
+    let totalValue = 0;
+    for (const d of deals) {
+      byStage.set(d.stage, (byStage.get(d.stage) ?? 0) + 1);
+      totalValue += d.value ?? 0;
+    }
+    const stageLabels: Record<string, string> = {
+      lead: "Lead", prospect: "Prospect", proposta: "Proposta",
+      contrato: "Contrato", andamento: "Em Andamento", concluido: "Concluído",
+    };
+    const lines = Array.from(byStage.entries())
+      .map(([s, n]) => `  • ${stageLabels[s] ?? s}: *${n}*`)
+      .join("\n");
+    return `📊 *Pipeline CRM (${deals.length} deals):*\n\n${lines}\n\nTotal estimado: *${fmt(totalValue)}*`;
+  }
+
+  if (queryType === "stuck") {
+    const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
+    const stuck = await prisma.deal.findMany({
+      where: { userId, updatedAt: { lt: threeDaysAgo }, stage: { notIn: ["concluido"] } },
+      include: { client: { select: { name: true } } },
+      orderBy: { updatedAt: "asc" },
+      take: 10,
+    });
+    if (stuck.length === 0) return "Nenhum lead parado nos últimos 3 dias. ✅";
+    const list = stuck.map(d => {
+      const days = Math.floor((now.getTime() - new Date(d.updatedAt).getTime()) / (1000 * 60 * 60 * 24));
+      return `• ${d.client.name} — ${d.title} _(${days}d sem movimento)_`;
+    }).join("\n");
+    return `⚠️ *Leads parados (${stuck.length}):*\n\n${list}`;
+  }
+
+  if (queryType === "no_action") {
+    const noAction = await prisma.deal.findMany({
+      where: { userId, nextAction: null, stage: { notIn: ["concluido"] } },
+      include: { client: { select: { name: true } } },
+      orderBy: { createdAt: "asc" },
+      take: 10,
+    });
+    if (noAction.length === 0) return "Todos os leads têm próxima ação definida. ✅";
+    const list = noAction.map(d => `• ${d.client.name} — ${d.title}`).join("\n");
+    return `📋 *Leads sem próxima ação (${noAction.length}):*\n\n${list}\n\nDe qual você quer cuidar primeiro?`;
+  }
+
+  // general
+  const [total, noAct, stuck3] = await Promise.all([
+    prisma.deal.count({ where: { userId, stage: { notIn: ["concluido"] } } }),
+    prisma.deal.count({ where: { userId, nextAction: null, stage: { notIn: ["concluido"] } } }),
+    prisma.deal.count({
+      where: {
+        userId,
+        stage: { notIn: ["concluido"] },
+        updatedAt: { lt: new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000) },
+      },
+    }),
+  ]);
+  return `📊 *Resumo CRM:*\n\n• Leads ativos: *${total}*\n• Sem próxima ação: *${noAct}*\n• Parados +3 dias: *${stuck3}*\n\nDigite _"leads parados"_ ou _"sem ação"_ para detalhes.`;
+}
+
+// ─── 11. createLead ──────────────────────────────────────────────
+
+export async function createLead(
+  data: OCCreateLeadData,
+  userId: string,
+): Promise<string> {
+  // Cria ou reutiliza cliente
+  const existing = await prisma.client.findFirst({
+    where: { userId, name: { contains: data.name.split(" ")[0], mode: "insensitive" } },
+  });
+
+  const client = existing ?? await prisma.client.create({
+    data: {
+      name: data.name,
+      phone: data.phone || null,
+      email: data.email || null,
+      status: "lead",
+      source: data.source || null,
+      notes: data.objectives ? `Objetivo: ${data.objectives}` : null,
+      userId,
+    },
+  });
+
+  const deal = await prisma.deal.create({
+    data: {
+      title: data.title || `Lead — ${data.name}`,
+      value: data.value || null,
+      stage: "lead",
+      priority: "medium",
+      nextAction: data.nextAction || null,
+      source: data.source || null,
+      objectives: data.objectives || null,
+      clientId: client.id,
+      userId,
+    },
+  });
+
+  const sourceLine = data.source ? `• Origem: ${data.source}\n` : "";
+  const valueLine = data.value ? `• Valor estimado: ${fmt(data.value)}\n` : "";
+  const nextLine = data.nextAction ? `• Próxima ação: ${data.nextAction}\n` : "";
+  const reuseNote = existing ? `_(cliente existente reutilizado)_\n` : "";
+
+  return `✅ Lead criado no CRM!\n\n• *${data.name}*\n${reuseNote}${sourceLine}${valueLine}${nextLine}\nAcesse o CRM para acompanhar o pipeline.`;
 }

@@ -259,19 +259,37 @@ export async function processOpenClawMessage(params: {
   // ── 4. QUERY DIRETA (sem confirmação) ─────────────────────────────
   if (intent === "query_pending") {
     const d = data as OCQueryPendingData;
-    const response = await getDailyPendingSummary(user.id, d.queryType || "general");
-    await prisma.openClawEvent.create({
-      data: { chatId, source, rawCommand: message, interpretedIntent: intent, extractedData: data as object, executionStatus: "executed", response, userId: user.id },
-    });
+    let response: string;
+    try {
+      response = await getDailyPendingSummary(user.id, d.queryType || "general");
+      await prisma.openClawEvent.create({
+        data: { chatId, source, rawCommand: message, interpretedIntent: intent, extractedData: data as object, executionStatus: "executed", response, userId: user.id },
+      });
+    } catch (err) {
+      const errMsg = String(err);
+      await prisma.openClawEvent.create({
+        data: { chatId, source, rawCommand: message, interpretedIntent: intent, executionStatus: "failed", errorMessage: errMsg, userId: user.id },
+      });
+      return { response: "Sistema operacional indisponível. Não foi possível consultar os dados agora. Tente novamente em instantes.", intent, status: "failed" };
+    }
     return { response, intent, status: "executed" };
   }
 
   if (intent === "query_crm") {
     const d = data as OCQueryCRMData;
-    const response = await queryCRM(user.id, d.queryType || "general");
-    await prisma.openClawEvent.create({
-      data: { chatId, source, rawCommand: message, interpretedIntent: intent, extractedData: data as object, executionStatus: "executed", response, userId: user.id },
-    });
+    let response: string;
+    try {
+      response = await queryCRM(user.id, d.queryType || "general");
+      await prisma.openClawEvent.create({
+        data: { chatId, source, rawCommand: message, interpretedIntent: intent, extractedData: data as object, executionStatus: "executed", response, userId: user.id },
+      });
+    } catch (err) {
+      const errMsg = String(err);
+      await prisma.openClawEvent.create({
+        data: { chatId, source, rawCommand: message, interpretedIntent: intent, executionStatus: "failed", errorMessage: errMsg, userId: user.id },
+      });
+      return { response: "Sistema operacional indisponível. Não foi possível consultar o CRM agora. Tente novamente em instantes.", intent, status: "failed" };
+    }
     return { response, intent, status: "executed" };
   }
 

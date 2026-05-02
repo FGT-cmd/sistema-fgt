@@ -2,14 +2,17 @@
 
 export type OCIntent =
   | "query_pending"
+  | "query_crm"
   | "create_student"
+  | "create_lead"
   | "register_payment"
   | "create_task"
   | "add_student_note"
   | "save_content_idea"
   | "unknown";
 
-export type OCQueryType = "who_didnt_pay" | "overdue" | "today" | "general";
+export type OCQueryType = "who_didnt_pay" | "overdue" | "today" | "attention" | "general";
+export type OCCRMQueryType = "pipeline" | "stuck" | "no_action" | "general";
 
 export type OCPaymentMethod =
   | "Pix" | "Dinheiro" | "Cartão" | "Transferência" | "Débito" | "Crédito";
@@ -53,9 +56,26 @@ export type OCSaveContentIdeaData = {
   idea: string;
 };
 
+export type OCQueryCRMData = {
+  queryType: OCCRMQueryType;
+};
+
+export type OCCreateLeadData = {
+  name: string;
+  title?: string;       // título do deal
+  source?: string;      // de onde veio (Instagram, WhatsApp, etc.)
+  value?: number;       // valor estimado
+  phone?: string;
+  email?: string;
+  objectives?: string;
+  nextAction?: string;
+};
+
 export type OCExtractedData =
   | OCQueryPendingData
+  | OCQueryCRMData
   | OCCreateStudentData
+  | OCCreateLeadData
   | OCRegisterPaymentData
   | OCCreateTaskData
   | OCAddStudentNoteData
@@ -67,7 +87,6 @@ export type OCExtractedData =
 export type OCClassification = {
   intent: OCIntent;
   data: OCExtractedData;
-  directResponse?: string; // para queries e unknown
 };
 
 // ─── Dados enriquecidos pós-validação ────────────────────────────

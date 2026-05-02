@@ -17,12 +17,13 @@ import {
   isOCConfirmation, isOCCancellation, updateOCEventStatus,
 } from "./session";
 import {
-  getDailyPendingSummary, queryCRM, createLead,
+  queryCRM, createLead,
   enrichCreateStudent, createStudent,
   enrichRegisterPayment, registerPayment,
-  createTask, enrichAddStudentNote, addStudentNote,
+  enrichAddStudentNote, addStudentNote,
   enrichSaveContentIdea, saveContentIdea,
 } from "./actions";
+import { opCreateTask, opGetPending, opLayerUserMessage } from "./opClient";
 import type {
   OCProcessResult, OCIntent, OCExtractedData, OCEnriched,
   OCCreateStudentData, OCRegisterPaymentData, OCCreateTaskData,
@@ -154,7 +155,7 @@ async function executeConfirmed(
     case "register_payment":
       return registerPayment(data as OCRegisterPaymentData, enriched, userId);
     case "create_task":
-      return createTask(data as OCCreateTaskData, enriched, userId);
+      return opCreateTask(data as OCCreateTaskData, enriched, userId);
     case "add_student_note":
       return addStudentNote(data as OCAddStudentNoteData, enriched, userId);
     case "save_content_idea":
@@ -219,7 +220,11 @@ export async function processOpenClawMessage(params: {
       } catch (err) {
         const errMsg = String(err);
         await updateOCEventStatus(pending.id, "failed", undefined, errMsg);
-        return { response: "Falha operacional ao executar a ação. O sistema pode estar temporariamente inacessível. Tente novamente em instantes.", intent: pending.intent, status: "failed" };
+        const response =
+          pending.intent === "create_task"
+            ? opLayerUserMessage(err)
+            : "Falha operacional ao executar a ação. O sistema pode estar temporariamente inacessível. Tente novamente em instantes.";
+        return { response, intent: pending.intent, status: "failed" };
       }
     }
 
@@ -261,7 +266,7 @@ export async function processOpenClawMessage(params: {
     const d = data as OCQueryPendingData;
     let response: string;
     try {
-      response = await getDailyPendingSummary(user.id, d.queryType || "general");
+      response = await opGetPending(user.id, d.queryType || "general");
       await prisma.openClawEvent.create({
         data: { chatId, source, rawCommand: message, interpretedIntent: intent, extractedData: data as object, executionStatus: "executed", response, userId: user.id },
       });
@@ -270,7 +275,7 @@ export async function processOpenClawMessage(params: {
       await prisma.openClawEvent.create({
         data: { chatId, source, rawCommand: message, interpretedIntent: intent, executionStatus: "failed", errorMessage: errMsg, userId: user.id },
       });
-      return { response: "Sistema operacional indisponível. Não foi possível consultar os dados agora. Tente novamente em instantes.", intent, status: "failed" };
+      return { response: opLayerUserMessage(err), intent, status: "failed" };
     }
     return { response, intent, status: "executed" };
   }

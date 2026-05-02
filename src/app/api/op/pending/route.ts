@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDailyPendingSummary } from "@/lib/openclaw/actions";
+import { getDefaultUser } from "@/lib/user";
 import type { OCQueryType } from "@/lib/openclaw/types";
 
 const QUERY_TYPES: OCQueryType[] = [
@@ -33,10 +34,7 @@ export async function GET(req: NextRequest) {
     return unauthorized("Credencial operacional inválida ou ausente.");
   }
 
-  const userId = req.headers.get("x-user-id")?.trim();
-  if (!userId) {
-    return badRequest("Cabeçalho x-user-id obrigatório.");
-  }
+  const user = await getDefaultUser();
 
   const raw = req.nextUrl.searchParams.get("queryType") ?? "general";
   if (!QUERY_TYPES.includes(raw as OCQueryType)) {
@@ -45,7 +43,7 @@ export async function GET(req: NextRequest) {
   const queryType = raw as OCQueryType;
 
   try {
-    const text = await getDailyPendingSummary(userId, queryType);
+    const text = await getDailyPendingSummary(user.id, queryType);
     return NextResponse.json({ text });
   } catch (err) {
     console.error("[GET /api/op/pending]", err);

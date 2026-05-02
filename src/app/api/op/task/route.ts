@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createTask } from "@/lib/openclaw/actions";
+import { getDefaultUser } from "@/lib/user";
 import type { OCCreateTaskData, OCEnriched } from "@/lib/openclaw/types";
 
 function unauthorized(msg: string) {
@@ -36,15 +37,10 @@ export async function POST(req: NextRequest) {
     return badRequest("Corpo da requisição deve ser um objeto.");
   }
 
-  const { userId, data, enriched } = body as {
-    userId?: unknown;
+  const { data, enriched } = body as {
     data?: unknown;
     enriched?: unknown;
   };
-
-  if (typeof userId !== "string" || !userId.trim()) {
-    return badRequest("Campo userId obrigatório.");
-  }
 
   if (!data || typeof data !== "object") {
     return badRequest("Campo data obrigatório.");
@@ -57,8 +53,10 @@ export async function POST(req: NextRequest) {
 
   const enr = (enriched && typeof enriched === "object" ? enriched : {}) as OCEnriched;
 
+  const user = await getDefaultUser();
+
   try {
-    const text = await createTask(d, enr, userId.trim());
+    const text = await createTask(d, enr, user.id);
     return NextResponse.json({ text });
   } catch (err) {
     console.error("[POST /api/op/task]", err);

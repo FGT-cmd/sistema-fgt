@@ -224,49 +224,46 @@ export async function POST(req: NextRequest) {
       orderBy: [{ dueDate: "asc" }, { number: "asc" }],
     });
 
-    if (pendingInstallments.length === 0) {
-      return NextResponse.json(
-        { text: `A aluna ${best.client.name} não possui parcelas pendentes.` },
-        { status: 409 },
-      );
+    const EPSILON = 0.01;
+    let installmentsToSettle: typeof pendingInstallments = [];
+
+    const exactSingleMatches = pendingInstallments.filter(
+      (inst) => Math.abs(inst.amount - parsed.amount) < EPSILON,
+    );
+    if (exactSingleMatches.length === 1) {
+      installmentsToSettle = [exactSingleMatches[0]];
+    } else if (exactSingleMatches.length === 0) {
+      let runningTotal = 0;
+      const contiguousByDueDate: typeof pendingInstallments = [];
+
+      for (const inst of pendingInstallments) {
+        runningTotal += inst.amount;
+        contiguousByDueDate.push(inst);
+
+        if (Math.abs(runningTotal - parsed.amount) < EPSILON) {
+          if (contiguousByDueDate.length >= 2) {
+            installmentsToSettle = [...contiguousByDueDate];
+          }
+          break;
+        }
+
+        if (runningTotal > parsed.amount + EPSILON) {
+          break;
+        }
+      }
     }
 
-    const amountMatches = pendingInstallments.filter((inst) => Math.abs(inst.amount - parsed.amount) < 0.01);
-
-    if (amountMatches.length === 0) {
-      return NextResponse.json(
-        {
-          text: `Valor ${parsed.amount} não corresponde a nenhuma parcela pendente de ${best.client.name}.`,
-        },
-        { status: 409 },
-      );
-    }
-
-    if (amountMatches.length > 1) {
-      return NextResponse.json(
-        {
-          text: `Há mais de uma parcela pendente de ${best.client.name} com valor ${parsed.amount}. Não registrei para evitar erro.`,
-        },
-        { status: 409 },
-      );
-    }
-
-    const installment = amountMatches[0];
     const now = new Date();
+    const txDescription =
+      installmentsToSettle.length > 0
+        ? `Pagamento ${best.client.name} - conciliado com ${installmentsToSettle.length} parcela(s)`
+        : `Pagamento ${best.client.name} - pendente de conciliação`;
 
-    await prisma.$transaction([
-      prisma.installment.update({
-        where: { id: installment.id },
-        data: {
-          status: "pago",
-          paidAt: now,
-          notes: `Pago via operação Telegram (${formatMethod(parsed.method)}).`,
-        },
-      }),
-      prisma.financialTx.create({
+    await prisma.$transaction(async (tx) => {
+      await tx.financialTx.create({
         data: {
           type: "receita",
-          description: `Pagamento ${best.client.name} - parcela ${installment.number}/${installment.sale.installmentsCount}`,
+          description: txDescription,
           amount: parsed.amount,
           category: "consultoria",
           status: "pago",
@@ -274,11 +271,28 @@ export async function POST(req: NextRequest) {
           paymentMethod: formatMethod(parsed.method),
           clientId: best.client.id,
         },
-      }),
-    ]);
+      });
+
+      for (const inst of installmentsToSettle) {
+        await tx.installment.update({
+          where: { id: inst.id },
+          data: {
+            status: "pago",
+            paidAt: now,
+            notes: `Pago via operação Telegram (${formatMethod(parsed.method)}).`,
+          },
+        });
+      }
+    });
+
+    if (installmentsToSettle.length > 0) {
+      return NextResponse.json({
+        text: `✅ Pagamento registrado e conciliado com ${installmentsToSettle.length} parcela${installmentsToSettle.length > 1 ? "s" : ""}.`,
+      });
+    }
 
     return NextResponse.json({
-      text: `Pagamento registrado: ${best.client.name}, R$ ${parsed.amount.toFixed(2)}, ${formatMethod(parsed.method)}.`,
+      text: `✅ Pagamento registrado para ${best.client.name}, mas ficou pendente de conciliação manual.`,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Erro inesperado";

@@ -17,7 +17,7 @@ import {
   isOCConfirmation, isOCCancellation, updateOCEventStatus,
 } from "./session";
 import {
-  getDailyPendingSummary,
+  getDailyPendingSummary, queryCRM, createLead,
   enrichCreateStudent, createStudent,
   enrichRegisterPayment, registerPayment,
   createTask, enrichAddStudentNote, addStudentNote,
@@ -27,6 +27,7 @@ import type {
   OCProcessResult, OCIntent, OCExtractedData, OCEnriched,
   OCCreateStudentData, OCRegisterPaymentData, OCCreateTaskData,
   OCAddStudentNoteData, OCSaveContentIdeaData, OCQueryPendingData,
+  OCQueryCRMData, OCCreateLeadData,
 } from "./types";
 import { findClientMatches } from "@/lib/whatsapp/executor";
 
@@ -85,6 +86,15 @@ function buildConfirmation(intent: OCIntent, data: OCExtractedData, enriched: OC
     return `${formatEmoji} Vou salvar esta ideia:\n\n_"${d.idea}"_\n\n• Formato sugerido: *${enriched.suggestedFormat}*\n• Gancho: _"${enriched.hook}"_\n\nConfirmar? _(sim/não)_`;
   }
 
+  if (intent === "create_lead") {
+    const d = data as OCCreateLeadData;
+    const sourceLine = d.source ? `\n• Origem: ${d.source}` : "";
+    const valueLine = d.value ? `\n• Valor estimado: R$ ${d.value}` : "";
+    const nextLine = d.nextAction ? `\n• Próxima ação: ${d.nextAction}` : "";
+    const objLine = d.objectives ? `\n• Objetivos: ${d.objectives}` : "";
+    return `🎯 Vou criar este lead no CRM:\n\n• *${d.name}*${sourceLine}${valueLine}${objLine}${nextLine}\n\nConfirmar? _(sim/não)_`;
+  }
+
   return "Confirmar? _(sim/não)_";
 }
 
@@ -126,6 +136,7 @@ async function enrichData(
     return { valid: true, enriched };
   }
 
+  // create_lead e query_crm não precisam de enriquecimento
   return { valid: true, enriched: {} };
 }
 
@@ -148,10 +159,42 @@ async function executeConfirmed(
       return addStudentNote(data as OCAddStudentNoteData, enriched, userId);
     case "save_content_idea":
       return saveContentIdea(data as OCSaveContentIdeaData, enriched, userId);
+    case "create_lead":
+      return createLead(data as OCCreateLeadData, userId);
     default:
       return "Ação executada.";
   }
 }
+
+// ─── Detector de intenção documental (barreira pré-classificação) ─
+
+const DOCUMENTAL_PATTERNS = [
+  /\banalis[ae]\s+(o\s+)?(código|sistema|arquitetura|arquivo|documento)/i,
+  /\brevise?\s+(o\s+)?(código|sistema|implementa)/i,
+  /\bexplique?\s+(o\s+)?(código|sistema|arquitetura|implementa)/i,
+  /\bleia?\s+(o\s+)?(arquivo|documento|código|drive)/i,
+  /\barquitetura\s+do\s+sistema/i,
+  /\bgoogle\s*drive\b/i,
+  /\bdatabase[_\s]url\b/i,
+  /\bvari[aá]vel\s+de\s+ambiente/i,
+  /\bcódigo[- ]fonte\b/i,
+  /\bimplementa[çc][aã]o\s+(do|da)\s+sistema/i,
+  /\bver\s+(o\s+)?(código|arquivo|documento|arquitetura)/i,
+  /\bveja\s+(o\s+)?(código|arquivo|documento|arquitetura)/i,
+];
+
+function isDocumentalRequest(msg: string): boolean {
+  return DOCUMENTAL_PATTERNS.some(p => p.test(msg));
+}
+
+const DOCUMENTAL_RESPONSE =
+  "Análise de arquivos e documentação não é minha função aqui.\n\n" +
+  "Posso operar o sistema:\n" +
+  "• Consultar pendências e pagamentos\n" +
+  "• Criar aluna ou lead\n" +
+  "• Registrar pagamento\n" +
+  "• Criar tarefa ou observação\n" +
+  "• Salvar ideia de conteúdo";
 
 // ─── Entry point principal ────────────────────────────────────────
 
@@ -176,7 +219,7 @@ export async function processOpenClawMessage(params: {
       } catch (err) {
         const errMsg = String(err);
         await updateOCEventStatus(pending.id, "failed", undefined, errMsg);
-        return { response: "Erro ao executar. Tente novamente.", intent: pending.intent, status: "failed" };
+        return { response: "Falha operacional ao executar a ação. O sistema pode estar temporariamente inacessível. Tente novamente em instantes.", intent: pending.intent, status: "failed" };
       }
     }
 
@@ -189,7 +232,15 @@ export async function processOpenClawMessage(params: {
     await cancelOCPendingSessions(chatId);
   }
 
-  // ── 2. CLASSIFICA NOVA MENSAGEM ───────────────────────────────────
+  // ── 2. BARREIRA: rejeita pedidos documentais antes de chamar IA ──
+  if (isDocumentalRequest(message)) {
+    await prisma.openClawEvent.create({
+      data: { chatId, source, rawCommand: message, interpretedIntent: "unknown", executionStatus: "received", response: DOCUMENTAL_RESPONSE, userId: user.id },
+    });
+    return { response: DOCUMENTAL_RESPONSE, intent: "unknown", status: "executed" };
+  }
+
+  // ── 3. CLASSIFICA NOVA MENSAGEM ───────────────────────────────────
   const clients = await prisma.client.findMany({ where: { userId: user.id }, select: { id: true, name: true }, orderBy: { name: "asc" } });
   const clientList = clients.map(c => c.name).join(", ");
 
@@ -200,12 +251,12 @@ export async function processOpenClawMessage(params: {
     await prisma.openClawEvent.create({
       data: { chatId, source, rawCommand: message, executionStatus: "failed", errorMessage: "Falha na classificação", userId: user.id },
     });
-    return { response: "Não consegui entender. Tente reformular.", intent: "unknown", status: "failed" };
+    return { response: "Sistema operacional indisponível no momento. Tente novamente em instantes.", intent: "unknown", status: "failed" };
   }
 
   const { intent, data } = classification;
 
-  // ── 3. QUERY DIRETA (sem confirmação) ─────────────────────────────
+  // ── 4. QUERY DIRETA (sem confirmação) ─────────────────────────────
   if (intent === "query_pending") {
     const d = data as OCQueryPendingData;
     const response = await getDailyPendingSummary(user.id, d.queryType || "general");
@@ -215,32 +266,37 @@ export async function processOpenClawMessage(params: {
     return { response, intent, status: "executed" };
   }
 
+  if (intent === "query_crm") {
+    const d = data as OCQueryCRMData;
+    const response = await queryCRM(user.id, d.queryType || "general");
+    await prisma.openClawEvent.create({
+      data: { chatId, source, rawCommand: message, interpretedIntent: intent, extractedData: data as object, executionStatus: "executed", response, userId: user.id },
+    });
+    return { response, intent, status: "executed" };
+  }
+
   if (intent === "unknown") {
-    const response = "Não entendi esse comando. Posso te ajudar a:\n• Consultar pendências\n• Criar aluna\n• Registrar pagamento\n• Criar tarefa\n• Salvar observação\n• Salvar ideia de conteúdo";
+    const response = "Não reconheci esse comando como uma operação do sistema.\n\nPosso executar:\n• *Consultar pendências* — \"quem não pagou?\", \"o que está atrasado?\"\n• *Criar aluna* — \"criar aluna Ana, plano semestral\"\n• *Registrar pagamento* — \"Ana pagou 300 no pix\"\n• *Criar tarefa* — \"me lembra de cobrar Bruna sexta\"\n• *Salvar observação* — \"obs da Ana: relatou fome à noite\"\n• *Salvar ideia* — \"ideia de conteúdo: ...\"\n• *Criar lead* — \"Ana quer contratar, veio pelo Instagram\"";
     await prisma.openClawEvent.create({
       data: { chatId, source, rawCommand: message, interpretedIntent: intent, executionStatus: "received", response, userId: user.id },
     });
     return { response, intent, status: "executed" };
   }
 
-  // ── 4. ENRIQUECE DADOS ────────────────────────────────────────────
+  // ── 5. ENRIQUECE DADOS ────────────────────────────────────────────
   const enrichResult = await enrichData(intent, data, user.id);
 
   if (!enrichResult.valid) {
     await prisma.openClawEvent.create({
       data: { chatId, source, rawCommand: message, interpretedIntent: intent, extractedData: data as object, executionStatus: "failed", response: enrichResult.message, userId: user.id },
     });
-    return { response: enrichResult.message || "Não consegui processar.", intent, status: "failed" };
+    return { response: enrichResult.message || "Não foi possível processar essa ação. Verifique os dados e tente novamente.", intent, status: "failed" };
   }
 
-  // Se enrichSaveContentIdea voltou com mensagem (plano não encontrado mas continua)
-  if (enrichResult.message) {
-    // Avisa mas não bloqueia — continua com confirmação
-    console.log("[OpenClaw] Enrich warning:", enrichResult.message);
-  }
-
-  // ── 5. MONTA CONFIRMAÇÃO E ARMAZENA ──────────────────────────────
-  const confirmationMsg = buildConfirmation(intent, data, enrichResult.enriched);
+  // ── 6. MONTA CONFIRMAÇÃO E ARMAZENA ──────────────────────────────
+  // Prepend warning ao usuário se enriquecimento encontrou problema mas não bloqueou
+  const warningPrefix = enrichResult.message ? `${enrichResult.message}\n\n` : "";
+  const confirmationMsg = warningPrefix + buildConfirmation(intent, data, enrichResult.enriched);
   const confirmationPayload = { intent, data, enriched: enrichResult.enriched };
 
   const event = await prisma.openClawEvent.create({

@@ -25,12 +25,25 @@ INTENTS E CAMPOS:
 query_pending → { "queryType": "who_didnt_pay" | "overdue" | "today" | "general" }
   - "quem não pagou" → who_didnt_pay
   - "atrasado/vencido" → overdue
-  - "hoje/dia/pendências" → today ou general
+  - "hoje/dia/pendências de alunos/pagamentos" → today ou general
+
+query_crm → { "queryType": "pipeline" | "stuck" | "no_action" | "general" }
+  - "pipeline/leads/CRM/funil" → pipeline
+  - "leads parados/sem movimento/travado" → stuck
+  - "sem ação/sem próxima ação/quem precisa de contato" → no_action
+  - outros sobre CRM → general
 
 create_student → { "name": string, "planName"?: string, "objective"?: string, "phone"?: string, "email"?: string }
   - qualquer "criar aluna", "cadastrar", "nova aluna", "adicionar aluna"
   - planName: extraia se mencionado ("semestral", "trimestral", "mensal", etc.)
   - objective: extraia se mencionado ("emagrecimento", "hipertrofia", "condicionamento", etc.)
+
+create_lead → { "name": string, "title"?: string, "source"?: string, "value"?: number, "phone"?: string, "email"?: string, "objectives"?: string, "nextAction"?: string }
+  - "novo lead", "criar lead", "lead de X", "X demonstrou interesse", "X quer contratar"
+  - title: nome do deal (ex: "Consultoria Premium para Ana")
+  - source: de onde veio (Instagram, WhatsApp, Indicação, etc.)
+  - value: valor estimado se mencionado
+  - nextAction: próxima ação se mencionada
 
 register_payment → { "studentName": string, "amount": number, "paymentMethod": "Pix"|"Dinheiro"|"Cartão"|"Transferência"|"Débito"|"Crédito", "date"?: "YYYY-MM-DD" }
   - "X pagou Y no pix", "X quitou", "X efetuou pagamento"
@@ -51,10 +64,19 @@ save_content_idea → { "idea": string }
 unknown → {}
 
 REGRAS CRÍTICAS:
-- Para create_student, register_payment, create_task, add_student_note, save_content_idea: deixe directResponse VAZIO — o sistema gera a confirmação.
-- Para query_pending: preencha directResponse com texto útil (não será usado, o sistema responde diretamente).
+- Para create_student, create_lead, register_payment, create_task, add_student_note, save_content_idea: deixe directResponse VAZIO — o sistema gera a confirmação.
+- Para query_pending e query_crm: preencha directResponse com texto útil (não será usado, o sistema responde diretamente).
 - NUNCA invente nomes, valores ou datas. Use exatamente o que está escrito.
-- Para datas: "hoje"=${today}, "amanhã"=dia seguinte, "sexta"=próxima sexta, etc. → YYYY-MM-DD.`;
+- Para datas: "hoje"=${today}, "amanhã"=dia seguinte, "sexta"=próxima sexta, etc. → YYYY-MM-DD.
+- Se a mensagem pode ser create_student OU create_lead: se há menção de pagamento/plano → create_student. Se é apenas "fulano quer contratar/tem interesse" → create_lead.
+
+NÃO É SUA FUNÇÃO — retorne intent "unknown" imediatamente se a mensagem:
+- Pedir análise de arquivos, código-fonte, Google Drive ou documentação
+- Pedir para "ver", "analisar", "revisar", "explicar" o sistema, arquitetura ou implementação
+- Mencionar DATABASE_URL, variáveis de ambiente, configuração técnica
+- Pedir relatório sobre código, módulos, rotas ou estrutura do projeto
+- Pedir qualquer coisa que não seja operar o Sistema FGT (consultar dados, registrar, criar)
+Você opera o sistema. Não analisa arquivos. Não lê documentação. Não explica código.`;
 
   const res = await anthropic.messages.create({
     model: "claude-sonnet-4-6",

@@ -59,11 +59,14 @@ export async function POST(req: NextRequest) {
     }
 
     // Processa via OpenClaw engine
-    const result = await processOpenClawMessage({
-      chatId,
-      message: text,
-      source: "telegram",
-    });
+    let result;
+    try {
+      result = await processOpenClawMessage({ chatId, message: text, source: "telegram" });
+    } catch (err) {
+      console.error("[POST /api/telegram] Falha no engine:", err);
+      await sendTelegramMessage(chatId, "Sistema operacional indisponível no momento. Tente novamente em instantes.");
+      return NextResponse.json({ ok: true });
+    }
 
     // Envia resposta
     await sendTelegramMessage(chatId, result.response);

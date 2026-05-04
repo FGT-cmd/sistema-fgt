@@ -33,9 +33,11 @@ export async function GET(req: NextRequest) {
     await prisma.user.update({
       where: { id: user.id },
       data: {
-        googleAccessToken:  tokens.access_token,
-        googleRefreshToken: tokens.refresh_token ?? undefined,
-        googleTokenExpiry:  expiry,
+        googleAccessToken: tokens.access_token,
+        googleTokenExpiry: expiry,
+        ...(tokens.refresh_token
+          ? { googleRefreshToken: tokens.refresh_token }
+          : {}),
       },
     });
 

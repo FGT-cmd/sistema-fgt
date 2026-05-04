@@ -14,11 +14,20 @@ export async function GET(req: NextRequest) {
 
   try {
     const tokens = await exchangeCode(code);
+    console.log("[op-calendar] google oauth callback tokens", {
+      hasAccessToken: Boolean(tokens.access_token),
+      hasRefreshToken: Boolean(tokens.refresh_token),
+      expires_in: tokens.expires_in,
+    });
     if (!tokens.access_token) {
       return NextResponse.redirect(new URL("/agenda?google=error", req.url));
     }
 
     const user = await getDefaultUser();
+    console.log("[op-calendar] callback saving tokens for user", {
+      id: user.id,
+      email: user.email,
+    });
     const expiry = new Date(Date.now() + tokens.expires_in * 1000);
 
     await prisma.user.update({

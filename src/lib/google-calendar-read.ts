@@ -97,8 +97,6 @@ export function resolveOperationalRange(
   };
 }
 
-const CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID?.trim() || "primary";
-
 export type ListEventsResult =
   | { ok: true; events: GoogleEvent[] }
   | { ok: false; message: string };
@@ -110,13 +108,27 @@ export async function listCalendarEventsReadonly(
   timeMin: string,
   timeMax: string,
 ): Promise<ListEventsResult> {
-  const token = await getValidAccessToken();
-  if (!token) {
-    return {
-      ok: false,
-      message:
-        "Google Agenda não está conectada. Conecte em Configurações / Agenda no sistema e tente de novo.",
-    };
+  const calId = process.env.GOOGLE_CALENDAR_ID?.trim() || "primary";
+  console.log("[op-calendar] listCalendarEventsReadonly", {
+    calendarId: calId,
+    timeMin,
+    timeMax,
+  });
+
+  let token: string;
+  try {
+    const t = await getValidAccessToken({ strictRefreshErrors: true });
+    if (!t) {
+      return {
+        ok: false,
+        message:
+          "Agenda: Google Agenda não está conectada. Conecte em Configurações / Agenda no sistema e tente de novo.",
+      };
+    }
+    token = t;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, message: `Agenda: ${msg}` };
   }
 
   const params = new URLSearchParams({
@@ -128,27 +140,34 @@ export async function listCalendarEventsReadonly(
     timeZone: TIME_ZONE,
   });
 
-  const encId = encodeURIComponent(CALENDAR_ID);
+  const encId = encodeURIComponent(calId);
   const res = await fetch(
     `https://www.googleapis.com/calendar/v3/calendars/${encId}/events?${params}`,
     { headers: { Authorization: `Bearer ${token}` } },
   );
 
+  const rawBody = await res.clone().text();
+  console.log("[op-calendar] Google Calendar API response", {
+    status: res.status,
+    ok: res.ok,
+    bodyPreview: rawBody.slice(0, 800),
+  });
+
   if (!res.ok) {
     let detail = res.statusText;
     try {
-      const body = (await res.json()) as { error?: { message?: string } };
+      const body = JSON.parse(rawBody) as { error?: { message?: string } };
       if (body?.error?.message) detail = body.error.message;
     } catch {
       /* ignore */
     }
     return {
       ok: false,
-      message: `Não foi possível ler a Google Agenda (${res.status}): ${detail}`,
+      message: `Agenda: Não foi possível ler a Google Agenda (${res.status}): ${detail}`,
     };
   }
 
-  const data = (await res.json()) as { items?: GoogleEvent[] };
+  const data = JSON.parse(rawBody) as { items?: GoogleEvent[] };
   return { ok: true, events: data.items ?? [] };
 }
 

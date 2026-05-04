@@ -52,9 +52,29 @@ export async function refreshAccessToken(refreshToken: string) {
   return res.json() as Promise<{ access_token: string; expires_in: number }>;
 }
 
-export async function getValidAccessToken(): Promise<string | null> {
+type RefreshTokenJson = {
+  access_token?: string;
+  expires_in?: number;
+  error?: string;
+  error_description?: string;
+};
+
+export type GetValidAccessTokenOptions = {
+  /** Se true, falha no refresh lança Error em vez de retornar null (ex.: /api/op/calendar). */
+  strictRefreshErrors?: boolean;
+};
+
+export async function getValidAccessToken(
+  opts?: GetValidAccessTokenOptions,
+): Promise<string | null> {
   const user = await getDefaultUser();
   const dbUser = await prisma.user.findUnique({ where: { id: user.id } });
+  console.log("[op-calendar] dbUser google fields", {
+    userId: dbUser?.id ?? user.id,
+    hasRefreshToken: Boolean(dbUser?.googleRefreshToken),
+    hasAccessToken: Boolean(dbUser?.googleAccessToken),
+    googleTokenExpiry: dbUser?.googleTokenExpiry?.toISOString?.() ?? null,
+  });
   if (!dbUser?.googleRefreshToken) return null;
 
   const now = new Date();
@@ -66,10 +86,24 @@ export async function getValidAccessToken(): Promise<string | null> {
   }
 
   // Refresh token
-  const tokens = await refreshAccessToken(dbUser.googleRefreshToken);
-  if (!tokens.access_token) return null;
+  console.log("[op-calendar] refreshing access token");
+  const tokens = (await refreshAccessToken(dbUser.googleRefreshToken)) as RefreshTokenJson;
+  console.log("[op-calendar] refreshAccessToken raw", JSON.stringify(tokens));
+  if (!tokens.access_token) {
+    console.warn("[op-calendar] refresh failed or missing access_token", tokens);
+    if (opts?.strictRefreshErrors) {
+      const err = tokens.error;
+      const desc = tokens.error_description;
+      throw new Error(
+        err
+          ? `Google OAuth refresh falhou (${err})${desc ? `: ${desc}` : ""}`
+          : "Google OAuth refresh não retornou access_token (verifique GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET no servidor).",
+      );
+    }
+    return null;
+  }
 
-  const newExpiry = new Date(now.getTime() + tokens.expires_in * 1000);
+  const newExpiry = new Date(now.getTime() + (tokens.expires_in ?? 3600) * 1000);
   await prisma.user.update({
     where: { id: user.id },
     data: {

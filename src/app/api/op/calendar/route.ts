@@ -36,6 +36,10 @@ export async function GET(req: NextRequest) {
     const listed = await listCalendarEventsReadonly(window.timeMin, window.timeMax);
 
     if (!listed.ok) {
+      console.warn("[op-calendar] GET /api/op/calendar failure", {
+        range: raw,
+        message: listed.message,
+      });
       return NextResponse.json({ text: listed.message }, { status: 502 });
     }
 

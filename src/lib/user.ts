@@ -9,5 +9,9 @@ export async function getDefaultUser() {
       data: { name: "Fernando Gomes", email: DEFAULT_EMAIL },
     });
   }
+  console.log("[op-calendar] getDefaultUser", {
+    userId: user.id,
+    email: user.email,
+  });
   return user;
 }

@@ -127,10 +127,11 @@ function findEarliestDuration(s: string): { minutes: number; match: string; inde
 function findEarliestTime(s: string): { hour: number; minute: number; match: string; index: number } | null {
   const patterns: { re: RegExp; parse: (m: RegExpExecArray) => { hour: number; minute: number } }[] = [
     {
-      re: /\b(?:às|as)\s*(\d{1,2})(?::(\d{2}))?(?:\s*h(?:oras?)?)?\b/gi,
+      // `\b` antes de "às" falha no JS (à não é \w); exige início ou espaço antes.
+      re: /(?:^|\s)((?:às|as)\s*(\d{1,2})(?::(\d{2}))?(?:\s*h(?:oras?)?)?)(?=\s|$|[,.;])/gi,
       parse: (m) => ({
-        hour: Number.parseInt(m[1] ?? "0", 10),
-        minute: m[2] ? Number.parseInt(m[2], 10) : 0,
+        hour: Number.parseInt(m[2] ?? "0", 10),
+        minute: m[3] ? Number.parseInt(m[3], 10) : 0,
       }),
     },
     {
@@ -171,7 +172,8 @@ type DateMatch =
   | { kind: "weekday"; dow: number; label: string; match: string; index: number };
 
 function findDate(s: string): DateMatch | null {
-  const tomorrowRe = /\bamanh[ãa]\b/i;
+  // `\b` após "ã" em "amanhã" falha no JS; fecha com lookahead de fim de token.
+  const tomorrowRe = /\bamanh[ãa](?=\s|$|[,.;])/i;
   const tm = tomorrowRe.exec(s);
   if (tm) {
     return { kind: "tomorrow", label: "amanhã", match: tm[0], index: tm.index };
@@ -199,6 +201,15 @@ function removeOnce(s: string, substr: string): string {
   const i = s.indexOf(substr);
   if (i < 0) return s;
   return `${s.slice(0, i)} ${s.slice(i + substr.length)}`.replace(/\s+/g, " ").trim();
+}
+
+/** Remove partículas de hora que sobram após recortes (ex.: "às Reunião" → "Reunião"). */
+function cleanTitleResiduals(s: string): string {
+  let t = s.replace(/\s+/g, " ").trim();
+  t = t.replace(/\s+(?:às|as|à)\s+/gi, " ");
+  t = t.replace(/^(?:às|as|à)\s+/i, "");
+  t = t.replace(/\s+(?:às|as|à)$/i, "");
+  return t.replace(/\s+/g, " ").trim();
 }
 
 export function parseOpCalendarPreview(rawText: string): OpCalendarPreviewParseResult {
@@ -237,7 +248,7 @@ export function parseOpCalendarPreview(rawText: string): OpCalendarPreviewParseR
     s = removeOnce(s, durHit.match);
   }
 
-  const title = s.replace(/\s+/g, " ").trim();
+  const title = cleanTitleResiduals(s);
   if (!title) {
     return { ok: false, text: "Faltou o título do compromisso (texto após data/hora/duração)." };
   }

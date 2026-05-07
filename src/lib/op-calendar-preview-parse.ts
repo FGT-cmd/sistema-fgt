@@ -212,6 +212,21 @@ function cleanTitleResiduals(s: string): string {
   return t.replace(/\s+/g, " ").trim();
 }
 
+/** Só no título final: remove prefixos de compromisso, marcadores e traços no início. */
+function cleanFinalTitle(s: string): string {
+  const leadPrefix =
+    /^(?:(?:cria|criar|marcar|agenda)(?:\s+um)?\s+compromisso\s+)/i;
+  const leadNoise = /^[\s•\-\u2013\u2014]+/;
+  let t = s.replace(/\s+/g, " ").trim();
+  let prev = "";
+  while (t !== prev) {
+    prev = t;
+    t = t.replace(leadNoise, "").trim();
+    t = t.replace(leadPrefix, "").trim();
+  }
+  return t.replace(/\s+/g, " ").trim();
+}
+
 export function parseOpCalendarPreview(rawText: string): OpCalendarPreviewParseResult {
   const raw = rawText.trim();
   if (!raw) {
@@ -248,7 +263,7 @@ export function parseOpCalendarPreview(rawText: string): OpCalendarPreviewParseR
     s = removeOnce(s, durHit.match);
   }
 
-  const title = cleanTitleResiduals(s);
+  const title = cleanFinalTitle(cleanTitleResiduals(s));
   if (!title) {
     return { ok: false, text: "Faltou o título do compromisso (texto após data/hora/duração)." };
   }

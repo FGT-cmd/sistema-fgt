@@ -151,6 +151,11 @@ export type CreateCalendarEventOptions = GetValidAccessTokenOptions & {
   exposeCalendarApiErrors?: boolean;
 };
 
+export type ListCalendarEventsOptions = GetValidAccessTokenOptions & {
+  /** Se true, erro HTTP da API Calendar vira throw com mensagem (fluxo operacional). */
+  exposeCalendarApiErrors?: boolean;
+};
+
 export async function createEvent(
   event: {
     summary: string;
@@ -199,6 +204,95 @@ export async function createEvent(
     }
     return null;
   }
+  return res.json() as Promise<GoogleEvent>;
+}
+
+export async function listCalendarEvents(
+  timeMin: string,
+  timeMax: string,
+  opts?: ListCalendarEventsOptions,
+): Promise<GoogleEvent[] | null> {
+  const token = await getValidAccessToken(opts);
+  if (!token) return null;
+
+  const params = new URLSearchParams({
+    timeMin,
+    timeMax,
+    singleEvents: "true",
+    orderBy: "startTime",
+    maxResults: "250",
+    timeZone: "America/Sao_Paulo",
+  });
+
+  const calId = encodeURIComponent(process.env.GOOGLE_CALENDAR_ID?.trim() || "primary");
+  const res = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/${calId}/events?${params}`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+
+  if (!res.ok) {
+    if (opts?.exposeCalendarApiErrors) {
+      let detail = res.statusText;
+      try {
+        const errBody = (await res.json()) as { error?: { message?: string } };
+        if (errBody?.error?.message) detail = errBody.error.message;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(`Não foi possível ler a Google Agenda (${res.status}): ${detail}`);
+    }
+    return [];
+  }
+
+  const data = (await res.json()) as { items?: GoogleEvent[] };
+  return data.items ?? [];
+}
+
+export type UpdateCalendarEventOptions = CreateCalendarEventOptions;
+
+export async function updateEventDateTime(
+  event: {
+    eventId: string;
+    start: string;
+    end: string;
+    timeZone?: string;
+  },
+  opts?: UpdateCalendarEventOptions,
+): Promise<GoogleEvent | null> {
+  const token = await getValidAccessToken(opts);
+  if (!token) return null;
+
+  const tz = event.timeZone?.trim() || "America/Sao_Paulo";
+  const body = {
+    start: { dateTime: event.start, timeZone: tz },
+    end: { dateTime: event.end, timeZone: tz },
+  };
+
+  const calId = encodeURIComponent(process.env.GOOGLE_CALENDAR_ID?.trim() || "primary");
+  const eventId = encodeURIComponent(event.eventId);
+  const res = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/${calId}/events/${eventId}`,
+    {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+
+  if (!res.ok) {
+    if (opts?.exposeCalendarApiErrors) {
+      let detail = res.statusText;
+      try {
+        const errBody = (await res.json()) as { error?: { message?: string } };
+        if (errBody?.error?.message) detail = errBody.error.message;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(`Não foi possível atualizar na Google Agenda (${res.status}): ${detail}`);
+    }
+    return null;
+  }
+
   return res.json() as Promise<GoogleEvent>;
 }
 

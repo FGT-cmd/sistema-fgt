@@ -603,6 +603,10 @@ model CheckoutSession {
   customerPhone String?
   notes         String?
   source        String   @default("telegram")
+  infinitepayOrderNsu      String?
+  infinitepayCheckoutUrl   String?
+  infinitepaySlug          String?
+  infinitepayRawResponse   Json?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }

@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { prisma } from "@/lib/prisma";
-import { CheckoutClient, CheckoutSummary } from "./checkout-client";
+import { CheckoutClient, CheckoutSummary, type CheckoutPageMode } from "./checkout-client";
 
 type PageProps = { params: Promise<{ token: string }> };
 
@@ -23,7 +23,10 @@ export default async function CheckoutTokenPage({ params }: PageProps) {
   const session = await prisma.checkoutSession.findUnique({ where: { token } });
   if (!session) notFound();
 
-  const completed = session.status === "customer_data_completed";
+  const payUrl = session.infinitepayCheckoutUrl ?? null;
+  let mode: CheckoutPageMode = "pending";
+  if (payUrl) mode = "has_pay_link";
+  else if (session.status === "customer_data_completed") mode = "retry_pay";
 
   return (
     <div className="min-h-screen bg-slate-100 py-10 px-4">
@@ -36,12 +39,12 @@ export default async function CheckoutTokenPage({ params }: PageProps) {
         <CheckoutSummary productName={session.productName} amountCents={session.amountCents} />
 
         <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          {!completed ? (
+          {mode === "pending" ? (
             <p className="mb-4 text-sm text-slate-600">
-              Preencha seus dados para continuar. O pagamento será informado na próxima etapa.
+              Preencha seus dados para ser redirecionado ao pagamento seguro (InfinitePay).
             </p>
           ) : null}
-          <CheckoutClient token={token} initialCompleted={completed} />
+          <CheckoutClient token={token} mode={mode} initialCheckoutUrl={payUrl} />
         </div>
       </div>
     </div>

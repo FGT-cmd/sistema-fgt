@@ -3,13 +3,16 @@
 import { useState } from "react";
 import { formatAmountBrl } from "@/lib/checkout-session";
 
+export type CheckoutPageMode = "pending" | "has_pay_link" | "retry_pay";
+
 type Props = {
   token: string;
-  initialCompleted: boolean;
+  mode: CheckoutPageMode;
+  initialCheckoutUrl: string | null;
 };
 
-export function CheckoutClient({ token, initialCompleted }: Props) {
-  const [completed, setCompleted] = useState(initialCompleted);
+export function CheckoutClient({ token, mode, initialCheckoutUrl }: Props) {
+  const checkoutUrl = initialCheckoutUrl;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState({
@@ -19,22 +22,25 @@ export function CheckoutClient({ token, initialCompleted }: Props) {
     customerCpf: "",
   });
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function postSubmit(body: Record<string, string>) {
     setError(null);
     setLoading(true);
     try {
       const res = await fetch(`/api/public/checkout/${encodeURIComponent(token)}/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify(body),
       });
-      const data = (await res.json()) as { ok?: boolean; message?: string };
+      const data = (await res.json()) as { ok?: boolean; message?: string; checkoutUrl?: string };
       if (!res.ok || !data.ok) {
-        setError(data.message ?? "Não foi possível enviar. Verifique os dados.");
+        setError(data.message ?? "Não foi possível continuar. Tente novamente.");
         return;
       }
-      setCompleted(true);
+      if (typeof data.checkoutUrl === "string" && data.checkoutUrl) {
+        window.location.assign(data.checkoutUrl);
+        return;
+      }
+      setError("Resposta sem URL de pagamento. Contate o suporte.");
     } catch {
       setError("Erro de rede. Tente novamente.");
     } finally {
@@ -42,13 +48,49 @@ export function CheckoutClient({ token, initialCompleted }: Props) {
     }
   }
 
-  if (completed) {
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    await postSubmit(form);
+  }
+
+  async function onRetryPayment() {
+    await postSubmit({});
+  }
+
+  if (checkoutUrl) {
     return (
       <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-6 text-center text-emerald-900">
-        <p className="text-lg font-medium">Obrigado!</p>
-        <p className="mt-2 text-sm">
-          Seus dados foram registrados. Em breve você receberá as instruções de pagamento.
+        <p className="text-lg font-medium">Pagamento</p>
+        <p className="mt-2 text-sm">Continue no InfinitePay para concluir o pagamento.</p>
+        <a
+          href={checkoutUrl}
+          className="mt-4 inline-block rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800"
+        >
+          Abrir pagamento
+        </a>
+      </div>
+    );
+  }
+
+  if (mode === "retry_pay") {
+    return (
+      <div className="space-y-4">
+        {error ? (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+            {error}
+          </div>
+        ) : null}
+        <p className="text-sm text-slate-600">
+          Não foi possível abrir o pagamento na última tentativa. Você pode tentar novamente.
         </p>
+        <button
+          type="button"
+          disabled={loading}
+          onClick={onRetryPayment}
+          className="w-full rounded-lg bg-blue-600 py-2.5 text-sm font-medium text-white shadow hover:bg-blue-700 disabled:opacity-60"
+        >
+          {loading ? "Conectando…" : "Tentar abrir pagamento novamente"}
+        </button>
       </div>
     );
   }
@@ -131,7 +173,7 @@ export function CheckoutClient({ token, initialCompleted }: Props) {
         disabled={loading}
         className="w-full rounded-lg bg-blue-600 py-2.5 text-sm font-medium text-white shadow hover:bg-blue-700 disabled:opacity-60"
       >
-        {loading ? "Enviando…" : "Continuar"}
+        {loading ? "Enviando…" : "Continuar para pagamento"}
       </button>
     </form>
   );

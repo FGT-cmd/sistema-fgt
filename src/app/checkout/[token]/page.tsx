@@ -25,7 +25,8 @@ export default async function CheckoutTokenPage({ params }: PageProps) {
 
   const payUrl = session.infinitepayCheckoutUrl ?? null;
   let mode: CheckoutPageMode = "pending";
-  if (payUrl) mode = "has_pay_link";
+  if (session.status === "paid") mode = "paid";
+  else if (payUrl) mode = "has_pay_link";
   else if (session.status === "customer_data_completed") mode = "retry_pay";
 
   return (
@@ -43,6 +44,9 @@ export default async function CheckoutTokenPage({ params }: PageProps) {
             <p className="mb-4 text-sm text-slate-600">
               Preencha seus dados para ser redirecionado ao pagamento seguro (InfinitePay).
             </p>
+          ) : null}
+          {mode === "paid" ? (
+            <p className="mb-4 text-sm text-slate-600">Este pagamento já foi confirmado.</p>
           ) : null}
           <CheckoutClient token={token} mode={mode} initialCheckoutUrl={payUrl} />
         </div>

@@ -78,6 +78,7 @@ model Client {
   name      String
   email     String?
   phone     String?
+  cpf       String?
   photo     String?
   tags              String[]
   notes             String?
@@ -92,8 +93,9 @@ model Client {
   updatedAt DateTime @updatedAt
   userId    String
 
-  user           User            @relation(fields: [userId], references: [id])
-  deals          Deal[]
+  user             User              @relation(fields: [userId], references: [id])
+  checkoutSession  CheckoutSession?
+  deals            Deal[]
   interactions   Interaction[]
   projects       Project[]
   invoices       Invoice[]
@@ -589,8 +591,8 @@ model ContentIdea {
   user User @relation(fields: [userId], references: [id])
 }
 
-// Checkout próprio (link público; pagamento em fases futuras)
-// status: pending_customer_data | customer_data_completed
+// Checkout próprio (link público; pagamento InfinitePay)
+// status: pending_customer_data | customer_data_completed | paid
 model CheckoutSession {
   id            String   @id @default(cuid())
   token         String   @unique
@@ -603,10 +605,18 @@ model CheckoutSession {
   customerPhone String?
   notes         String?
   source        String   @default("telegram")
-  infinitepayOrderNsu      String?
-  infinitepayCheckoutUrl   String?
-  infinitepaySlug          String?
-  infinitepayRawResponse   Json?
+  infinitepayOrderNsu        String?
+  infinitepayCheckoutUrl     String?
+  infinitepaySlug            String?
+  infinitepayRawResponse     Json?
+  infinitepayTransactionNsu  String?
+  infinitepayReceiptUrl      String?
+  infinitepayCaptureMethod   String?
+  paidAmountCents            Int?
+  paidAt                     DateTime?
+  webhookPayload             Json?
+  clientId                   String?  @unique
+  client                     Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { formatAmountBrl } from "@/lib/checkout-session";
 
-export type CheckoutPageMode = "pending" | "has_pay_link" | "retry_pay";
+export type CheckoutPageMode = "pending" | "has_pay_link" | "retry_pay" | "paid";
 
 type Props = {
   token: string;
@@ -55,6 +55,15 @@ export function CheckoutClient({ token, mode, initialCheckoutUrl }: Props) {
 
   async function onRetryPayment() {
     await postSubmit({});
+  }
+
+  if (mode === "paid") {
+    return (
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-6 text-center text-emerald-900">
+        <p className="text-lg font-medium">Pagamento confirmado</p>
+        <p className="mt-2 text-sm">Obrigado! Seu cadastro foi concluído com sucesso.</p>
+      </div>
+    );
   }
 
   if (checkoutUrl) {

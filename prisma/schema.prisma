@@ -588,3 +588,21 @@ model ContentIdea {
 
   user User @relation(fields: [userId], references: [id])
 }
+
+// Checkout próprio (link público; pagamento em fases futuras)
+// status: pending_customer_data | customer_data_completed
+model CheckoutSession {
+  id            String   @id @default(cuid())
+  token         String   @unique
+  productName   String
+  amountCents   Int
+  status        String   @default("pending_customer_data")
+  customerName  String?
+  customerCpf   String?
+  customerEmail String?
+  customerPhone String?
+  notes         String?
+  source        String   @default("telegram")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}

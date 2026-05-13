@@ -85,12 +85,7 @@ export async function POST(req: NextRequest) {
 
     const url = `${base}/checkout/${checkoutToken}`;
     const valor = formatAmountBrl(amountRaw);
-    const text =
-      `Link gerado!\n\n` +
-      `📦 Produto: ${productName}\n` +
-      `💰 Valor: ${valor}\n\n` +
-      `🔗 Link:\n${url}\n\n` +
-      `Copie e envie ao cliente.`;
+    const text = `📦 Produto: ${productName}\n💰 Valor: ${valor}\n🔗 ${url}`;
 
     return NextResponse.json({ text, url, token: checkoutToken });
   } catch (err) {

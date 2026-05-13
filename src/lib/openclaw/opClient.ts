@@ -22,8 +22,9 @@ function requireSecret(): string {
 
 async function readErrorBody(res: Response): Promise<string> {
   try {
-    const j = (await res.json()) as { error?: string };
+    const j = (await res.json()) as { error?: string; text?: string };
     if (j?.error && typeof j.error === "string") return j.error;
+    if (j?.text && typeof j.text === "string") return j.text;
   } catch {
     /* ignore */
   }
@@ -84,6 +85,40 @@ export async function opCreateTask(
   return body.text;
 }
 
+/** POST /api/op/checkout/create — texto formatado para Telegram */
+export async function opCheckoutCreate(payload: {
+  productName: string;
+  amountCents: number;
+  notes?: string;
+  source?: string;
+}): Promise<string> {
+  const secret = requireSecret();
+  const res = await fetch(`${getOpBaseUrl()}/api/op/checkout/create`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${secret}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      productName: payload.productName,
+      amountCents: payload.amountCents,
+      ...(payload.notes ? { notes: payload.notes } : {}),
+      source: payload.source ?? "telegram",
+    }),
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    throw new Error(await readErrorBody(res));
+  }
+
+  const body = (await res.json()) as { text?: string };
+  if (typeof body.text !== "string") {
+    throw new Error("Resposta inválida do serviço de checkout.");
+  }
+  return body.text;
+}
+
 /**
  * Mensagem curta para o usuário final (Telegram etc.) a partir de erros da camada /api/op.
  * Não expõe nomes de variáveis de ambiente. Detalhe técnico continua no log / OpenClawEvent.errorMessage.
@@ -102,6 +137,12 @@ export function opLayerUserMessage(err: unknown): string {
   }
   if (/falha ao criar tarefa/i.test(raw)) {
     return "Não foi possível criar a tarefa agora. Tente novamente em instantes.";
+  }
+  if (/falha ao criar checkout/i.test(raw)) {
+    return "Não foi possível gerar o link de checkout agora. Tente novamente em instantes.";
+  }
+  if (/resposta inválida do serviço de checkout/i.test(raw)) {
+    return "Não foi possível gerar o link de checkout agora. Tente novamente em instantes.";
   }
   if (/resposta inválida do serviço|resposta inconsistente/i.test(raw)) {
     return "Resposta inconsistente do serviço operacional. Tente novamente em instantes.";

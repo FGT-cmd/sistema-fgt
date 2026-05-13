@@ -23,7 +23,8 @@ import {
   enrichAddStudentNote, addStudentNote,
   enrichSaveContentIdea, saveContentIdea,
 } from "./actions";
-import { opCreateTask, opGetPending, opLayerUserMessage } from "./opClient";
+import { opCheckoutCreate, opCreateTask, opGetPending, opLayerUserMessage } from "./opClient";
+import { parseTelegramCheckoutLinkCommand } from "@/lib/checkout-telegram-parse";
 import type {
   OCProcessResult, OCIntent, OCExtractedData, OCEnriched,
   OCCreateStudentData, OCRegisterPaymentData, OCCreateTaskData,
@@ -245,6 +246,50 @@ export async function processOpenClawMessage(params: {
     return { response: DOCUMENTAL_RESPONSE, intent: "unknown", status: "executed" };
   }
 
+  const checkoutCmd = parseTelegramCheckoutLinkCommand(message);
+  if (checkoutCmd) {
+    let response: string;
+    try {
+      response = await opCheckoutCreate({
+        productName: checkoutCmd.productName,
+        amountCents: checkoutCmd.amountCents,
+        source: "telegram",
+      });
+      await prisma.openClawEvent.create({
+        data: {
+          chatId,
+          source,
+          rawCommand: message,
+          interpretedIntent: "checkout_create",
+          extractedData: {
+            productName: checkoutCmd.productName,
+            amountCents: checkoutCmd.amountCents,
+          } as object,
+          executionStatus: "executed",
+          response,
+          userId: user.id,
+        },
+      });
+      return { response, intent: "unknown", status: "executed" };
+    } catch (err) {
+      const errMsg = String(err);
+      response = opLayerUserMessage(err);
+      await prisma.openClawEvent.create({
+        data: {
+          chatId,
+          source,
+          rawCommand: message,
+          interpretedIntent: "checkout_create",
+          executionStatus: "failed",
+          errorMessage: errMsg,
+          response,
+          userId: user.id,
+        },
+      });
+      return { response, intent: "unknown", status: "failed" };
+    }
+  }
+
   // ── 3. CLASSIFICA NOVA MENSAGEM ───────────────────────────────────
   const clients = await prisma.client.findMany({ where: { userId: user.id }, select: { id: true, name: true }, orderBy: { name: "asc" } });
   const clientList = clients.map(c => c.name).join(", ");
@@ -252,7 +297,7 @@ export async function processOpenClawMessage(params: {
   let classification: Awaited<ReturnType<typeof classifyOCMessage>>;
   try {
     classification = await classifyOCMessage(message, clientList, today);
-  } catch (err) {
+  } catch {
     await prisma.openClawEvent.create({
       data: { chatId, source, rawCommand: message, executionStatus: "failed", errorMessage: "Falha na classificação", userId: user.id },
     });

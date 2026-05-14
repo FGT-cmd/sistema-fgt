@@ -5,8 +5,9 @@ import {
   ChevronLeft, ChevronRight, Plus, Trash2, Check, Upload, RefreshCw,
   TrendingUp, TrendingDown, Wallet, Target, X, ChevronDown,
   LayoutGrid, CreditCard, Receipt, ListChecks, AlertCircle,
-  CheckCircle2, Clock, Users, DollarSign, Loader2, Calendar,
+  CheckCircle2, Clock, Users, DollarSign, Loader2, Calendar, ExternalLink,
 } from "lucide-react";
+import Link from "next/link";
 
 // ─── Types ───────────────────────────────────────────────────────
 type Tx = {
@@ -831,7 +832,10 @@ function ParcelasReceber({ sales, clients, onToggleParcela, onAddSale, onDeleteS
                 return (
                   <tr key={inst.id} className={`border-t border-gray-50 hover:bg-gray-50/60 group ${over ? "bg-red-50/30" : isToday ? "bg-amber-50/30" : ""}`}>
                     <td className="px-4 py-3">
-                      <p className="font-medium text-gray-800">{inst.sale.client.name}</p>
+                      <Link href={`/alunos?open=${inst.sale.client.id}`} className="font-medium text-gray-800 hover:text-indigo-600 transition-colors flex items-center gap-1 group/link">
+                        {inst.sale.client.name}
+                        <ExternalLink className="w-3 h-3 text-gray-300 opacity-0 group-hover/link:opacity-100 transition-opacity" />
+                      </Link>
                     </td>
                     <td className="px-4 py-3 hidden md:table-cell">
                       <p className="text-xs text-gray-500 truncate max-w-[160px]">{inst.sale.description}</p>
@@ -1220,7 +1224,7 @@ export default function FinanceiroPage() {
             ? `${sale.description}${suffix} (caixa)`
             : `${sale.description}${suffix}`,
           amount:        cashAmount,
-          category:      isCard ? "Caixa" : "Parcela",
+          category:      isCard ? "Caixa" : sale.installmentsCount === 1 ? "Consultoria" : "Parcela",
           status:        inst.status,
           dueDate:       inst.dueDate ?? null,
           paidAt:        inst.paidAt ?? null,
@@ -1320,14 +1324,14 @@ export default function FinanceiroPage() {
   // Parcelas vencendo nos próximos 7 dias (excluindo hoje e vencidas)
   const _todayEnd = new Date(); _todayEnd.setHours(23, 59, 59, 999);
   const _nextWeek = new Date(_todayEnd.getTime() + 7 * 24 * 60 * 60 * 1000);
-  type WeekInst = { id: string; amount: number; dueDate: string; clientName: string };
+  type WeekInst = { id: string; amount: number; dueDate: string; clientName: string; clientId: string };
   const weekInstallments: WeekInst[] = sales
     .flatMap(s => s.installments
       .filter(i => {
         const d = new Date(i.dueDate);
         return i.status !== "pago" && d > _todayEnd && d <= _nextWeek;
       })
-      .map(i => ({ id: i.id, amount: i.amount, dueDate: i.dueDate, clientName: s.client.name }))
+      .map(i => ({ id: i.id, amount: i.amount, dueDate: i.dueDate, clientName: s.client.name, clientId: s.client.id }))
     )
     .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime())
     .slice(0, 8);
@@ -1402,8 +1406,39 @@ export default function FinanceiroPage() {
           </div>
         </div>
 
+        {/* ── Vencimentos da semana (destaque) ─── */}
+        {weekInstallments.length > 0 && (
+          <div className="mb-3 bg-blue-50 border border-blue-200 rounded-xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-2.5">
+              <div className="flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-blue-600 shrink-0"/>
+                <span className="text-xs font-bold text-blue-700">Vencimentos esta semana</span>
+                <span className="text-xs bg-blue-200 text-blue-800 rounded-full px-2 py-0.5 font-bold">{weekInstallments.length}</span>
+              </div>
+              <button onClick={() => setTab("parcelas")} className="text-xs text-blue-600 hover:underline font-medium flex items-center gap-1">
+                Ver parcelas <ChevronRight className="w-3 h-3"/>
+              </button>
+            </div>
+            <div className="px-4 pb-3 flex gap-2 overflow-x-auto">
+              {weekInstallments.slice(0, 5).map(i => (
+                <Link key={i.id} href={`/alunos?open=${i.clientId}`}
+                  className="shrink-0 bg-white rounded-lg border border-blue-100 px-3 py-2 min-w-[120px] hover:border-blue-300 transition-colors">
+                  <p className="text-xs font-semibold text-gray-800 truncate">{i.clientName}</p>
+                  <p className="text-xs text-blue-600 font-bold">{fmt(i.amount)}</p>
+                  <p className="text-[10px] text-gray-400">{fmtDate(i.dueDate)}</p>
+                </Link>
+              ))}
+              {weekInstallments.length > 5 && (
+                <button onClick={() => setTab("parcelas")} className="shrink-0 bg-white rounded-lg border border-blue-100 px-3 py-2 min-w-[80px] hover:border-blue-300 transition-colors flex items-center justify-center text-xs text-blue-500 font-medium">
+                  +{weekInstallments.length - 5} mais
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* ── Mini-resumo de cobranças (clica para ir à aba Cobranças) ─── */}
-        {alerts && (alerts.counts.overdue + alerts.counts.today + weekInstallments.length + alerts.counts.endingSoon) > 0 && (
+        {alerts && (alerts.counts.overdue + alerts.counts.today + alerts.counts.endingSoon) > 0 && (
           <div className="flex items-center gap-3 mb-4 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl flex-wrap">
             <AlertCircle className="w-4 h-4 text-amber-600 shrink-0"/>
             <div className="flex items-center gap-1.5 flex-wrap flex-1">
@@ -1415,11 +1450,6 @@ export default function FinanceiroPage() {
               {alerts.counts.today > 0 && (
                 <span className="text-xs bg-amber-200 text-amber-800 rounded-full px-2 py-0.5 font-medium">
                   {alerts.counts.today} vence hoje
-                </span>
-              )}
-              {weekInstallments.length > 0 && (
-                <span className="text-xs bg-blue-100 text-blue-700 rounded-full px-2 py-0.5 font-medium">
-                  {weekInstallments.length} esta semana
                 </span>
               )}
               {alerts.counts.endingSoon > 0 && (
@@ -1466,7 +1496,9 @@ export default function FinanceiroPage() {
       {/* ── Tab content ─────────────────────────── */}
       <div className="flex-1 p-6">
         {loading ? (
-          <div className="flex items-center justify-center py-32 text-gray-400 text-sm">Carregando...</div>
+          <div className="flex items-center justify-center py-32 gap-2 text-gray-400 text-sm">
+            <Loader2 className="w-5 h-5 animate-spin text-indigo-400" /> Carregando dados financeiros...
+          </div>
         ) : (
           <>
             {tab === "fluxo" && (
@@ -1545,7 +1577,10 @@ export default function FinanceiroPage() {
                           <div key={c.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
                             <div className="flex items-start justify-between gap-3">
                               <div className="flex-1 min-w-0">
-                                <p className="font-semibold text-gray-800">{c.name}</p>
+                                <Link href={`/alunos?open=${c.id}`} className="font-semibold text-gray-800 hover:text-indigo-600 transition-colors flex items-center gap-1 group/link">
+                                  {c.name}
+                                  <ExternalLink className="w-3 h-3 text-gray-300 opacity-0 group-hover/link:opacity-100 transition-opacity shrink-0" />
+                                </Link>
                                 <div className="flex items-center gap-2 mt-1 flex-wrap">
                                   {c.overdueCount > 0 && (
                                     <span className="text-xs bg-red-100 text-red-700 rounded-full px-2 py-0.5 font-medium">

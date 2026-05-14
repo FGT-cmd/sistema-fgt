@@ -99,7 +99,7 @@ async function createFinancialChain(
 
   await tx.financialTx.create({
     data: {
-      type: "entrada",
+      type: "receita",
       description: opts.productName,
       amount: opts.totalAmount,
       category: "vendas",

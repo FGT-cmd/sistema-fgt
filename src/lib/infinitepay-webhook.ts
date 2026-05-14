@@ -61,6 +61,8 @@ export type WebhookProcessResult =
 
 type PrismaTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
+type FinancialChainResult = { saleId: string; financialTxId: string };
+
 async function createFinancialChain(
   tx: PrismaTx,
   opts: {
@@ -72,7 +74,7 @@ async function createFinancialChain(
     paymentMethod: string;
     orderNsu: string;
   },
-): Promise<void> {
+): Promise<FinancialChainResult> {
   const sale = await tx.sale.create({
     data: {
       description: opts.productName,
@@ -97,7 +99,7 @@ async function createFinancialChain(
     },
   });
 
-  await tx.financialTx.create({
+  const ftx = await tx.financialTx.create({
     data: {
       type: "receita",
       description: opts.productName,
@@ -116,6 +118,8 @@ async function createFinancialChain(
     where: { id: opts.sessionId },
     data: { saleId: sale.id },
   });
+
+  return { saleId: sale.id, financialTxId: ftx.id };
 }
 
 export async function processInfinitePayWebhook(
@@ -218,8 +222,8 @@ export async function processInfinitePayWebhook(
       const totalAmount = (session.paidAmountCents ?? session.amountCents) / 100;
       const paidAt = session.paidAt ?? new Date();
 
-      await prisma.$transaction(async (tx) => {
-        await createFinancialChain(tx, {
+      const chainResult = await prisma.$transaction(async (tx) => {
+        return createFinancialChain(tx, {
           sessionId: session.id,
           clientId: resolvedClientId!,
           productName: session.productName,
@@ -229,6 +233,30 @@ export async function processInfinitePayWebhook(
           orderNsu,
         });
       });
+
+      // Criar InvoiceIssue se ainda não existir para esta sessão
+      const existingInvoice = await prisma.invoiceIssue.findFirst({
+        where: { checkoutSessionId: session.id },
+      });
+      if (!existingInvoice) {
+        await prisma.invoiceIssue.create({
+          data: {
+            clientId:          resolvedClientId!,
+            saleId:            chainResult.saleId,
+            checkoutSessionId: session.id,
+            financialTxId:     chainResult.financialTxId,
+            documentType:      "nfse",
+            status:            "ready",
+            serviceDescription: session.productName,
+            amount:            totalAmount,
+            taxpayerName:      session.customerName?.trim() || "",
+            taxpayerCpfCnpj:   session.customerCpf?.trim()   || null,
+            taxpayerEmail:     session.customerEmail?.trim()  || null,
+            taxpayerPhone:     session.customerPhone?.trim()  || null,
+            externalProvider:  "notasy",
+          },
+        });
+      }
     }
 
     return { kind: "ok", idempotent: true };
@@ -308,8 +336,8 @@ export async function processInfinitePayWebhook(
       resolvedClientId = client.id;
     }
 
-    // Criar registros financeiros
-    await createFinancialChain(tx, {
+    // Criar registros financeiros e controle fiscal
+    const { saleId, financialTxId } = await createFinancialChain(tx, {
       sessionId: fresh.id,
       clientId: resolvedClientId,
       productName: session.productName,
@@ -317,6 +345,24 @@ export async function processInfinitePayWebhook(
       paidAt,
       paymentMethod,
       orderNsu,
+    });
+
+    await tx.invoiceIssue.create({
+      data: {
+        clientId:          resolvedClientId,
+        saleId,
+        checkoutSessionId: fresh.id,
+        financialTxId,
+        documentType:      "nfse",
+        status:            "ready",
+        serviceDescription: session.productName,
+        amount:            totalAmount,
+        taxpayerName:      customerName,
+        taxpayerCpfCnpj:   session.customerCpf?.trim()   || null,
+        taxpayerEmail:     session.customerEmail?.trim()  || null,
+        taxpayerPhone:     session.customerPhone?.trim()  || null,
+        externalProvider:  "notasy",
+      },
     });
   });
 

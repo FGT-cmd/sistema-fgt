@@ -110,6 +110,7 @@ model Client {
   sales          Sale[]
   files          StudentFile[]
   todoTasks      TodoTask[]
+  invoiceIssues  InvoiceIssue[]
 }
 
 model Deal {
@@ -166,8 +167,49 @@ model FinancialTx {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  client      Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  installment Installment? @relation(fields: [installmentId], references: [id], onDelete: Cascade)
+  client        Client?       @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  installment   Installment?  @relation(fields: [installmentId], references: [id], onDelete: Cascade)
+  invoiceIssues InvoiceIssue[]
+}
+
+// Controle interno de emissão fiscal (orquestração futura via Notasy)
+model InvoiceIssue {
+  id                    String    @id @default(cuid())
+  clientId              String
+  saleId                String?
+  checkoutSessionId     String?
+  financialTxId         String?
+  documentType          String    @default("nfse")
+  status                String    @default("ready")
+  serviceDescription    String
+  amount                Float
+  taxpayerName          String
+  taxpayerCpfCnpj       String?
+  taxpayerEmail         String?
+  taxpayerPhone         String?
+  addressStreet         String?
+  addressNumber         String?
+  addressNeighborhood   String?
+  addressCity           String?
+  addressState          String?
+  addressZipCode        String?
+  externalProvider      String?
+  externalId            String?
+  invoiceNumber         String?
+  pdfUrl                String?
+  xmlUrl                String?
+  rawPayload            Json?
+  rawResponse           Json?
+  errorMessage          String?
+  sentAt                DateTime?
+  issuedAt              DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  client            Client           @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  sale              Sale?            @relation(fields: [saleId], references: [id], onDelete: SetNull)
+  checkoutSession   CheckoutSession? @relation(fields: [checkoutSessionId], references: [id], onDelete: SetNull)
+  financialTx       FinancialTx?     @relation(fields: [financialTxId], references: [id], onDelete: SetNull)
 }
 
 model Invoice {
@@ -220,6 +262,7 @@ model Sale {
   servicePlan     ServicePlan?    @relation(fields: [servicePlanId], references: [id], onDelete: SetNull)
   installments    Installment[]
   checkoutSession CheckoutSession?
+  invoiceIssues   InvoiceIssue[]
 }
 
 model Installment {
@@ -622,4 +665,5 @@ model CheckoutSession {
   sale                       Sale?    @relation(fields: [saleId], references: [id], onDelete: SetNull)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+  invoiceIssues InvoiceIssue[]
 }

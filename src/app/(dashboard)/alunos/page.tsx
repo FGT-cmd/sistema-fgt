@@ -31,6 +31,18 @@ type ClientTask = {
   dueDate: string | null; urgent: boolean | null; important: boolean | null;
 };
 type Observacao = { id: string; type: string; content: string; date: string };
+type InvoiceIssue = {
+  id: string;
+  status: string;
+  amount: number;
+  serviceDescription: string;
+  externalProvider?: string | null;
+  invoiceNumber?: string | null;
+  pdfUrl?: string | null;
+  errorMessage?: string | null;
+  createdAt: string;
+};
+
 type Aluno = {
   id: string; name: string; email?: string | null; phone?: string | null;
   cpf?: string | null;
@@ -39,6 +51,7 @@ type Aluno = {
   paymentMethod?: string | null; negotiationNotes?: string | null;
   contractUrl?: string | null; tags: string[]; createdAt: string;
   sales: Sale[]; files: StudentFile[];
+  invoiceIssues?: InvoiceIssue[];
 };
 
 // ─── Constants ────────────────────────────────────────────────────
@@ -1405,6 +1418,44 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
               })
             }
           </div>
+
+          {/* Notas Fiscais */}
+          {aluno.invoiceIssues && aluno.invoiceIssues.length > 0 && (
+            <div className="px-5 py-4">
+              <span className="text-[11px] font-bold text-gray-400 uppercase block mb-3">Notas Fiscais</span>
+              <div className="space-y-2">
+                {aluno.invoiceIssues.map(inv => {
+                  const statusCfgInv: Record<string, { label: string; cls: string }> = {
+                    ready:    { label: "Pronta",     cls: "bg-blue-100 text-blue-700" },
+                    pending:  { label: "Pendente",   cls: "bg-amber-100 text-amber-700" },
+                    sent:     { label: "Enviada",    cls: "bg-indigo-100 text-indigo-700" },
+                    issued:   { label: "Emitida",    cls: "bg-green-100 text-green-700" },
+                    error:    { label: "Erro",       cls: "bg-red-100 text-red-700" },
+                    canceled: { label: "Cancelada",  cls: "bg-gray-100 text-gray-500" },
+                  };
+                  const sc = statusCfgInv[inv.status] ?? { label: inv.status, cls: "bg-gray-100 text-gray-500" };
+                  return (
+                    <div key={inv.id} className="bg-gray-50 rounded-xl p-3 border border-gray-100">
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${sc.cls}`}>{sc.label}</span>
+                        {inv.externalProvider && <span className="text-[10px] text-gray-400 uppercase">{inv.externalProvider}</span>}
+                        {inv.invoiceNumber && <span className="text-[10px] font-mono text-gray-500">#{inv.invoiceNumber}</span>}
+                      </div>
+                      <p className="text-xs text-gray-700 font-medium truncate">{inv.serviceDescription}</p>
+                      <p className="text-xs text-gray-500">{fmt(inv.amount)}</p>
+                      {inv.errorMessage && <p className="text-[10px] text-red-500 mt-1 truncate">{inv.errorMessage}</p>}
+                      {inv.pdfUrl && (
+                        <a href={inv.pdfUrl} target="_blank" rel="noopener noreferrer"
+                          className="text-[10px] text-indigo-600 hover:underline flex items-center gap-1 mt-1">
+                          <ExternalLink className="w-3 h-3" /> PDF da nota
+                        </a>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           </>)} {/* end drawerTab === "info" */}
 
           {/* ── Tab: Tarefas ──────────────────── */}

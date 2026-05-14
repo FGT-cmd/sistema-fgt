@@ -11,6 +11,7 @@ export async function GET() {
         sales: { include: { installments: true }, orderBy: { createdAt: "desc" } },
         financialTxs: { where: { type: "receita" }, orderBy: { createdAt: "desc" } },
         files: { orderBy: { createdAt: "desc" } },
+        invoiceIssues: { orderBy: { createdAt: "desc" } },
       },
       orderBy: { name: "asc" },
     });

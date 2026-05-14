@@ -102,7 +102,7 @@ async function createFinancialChain(
       type: "receita",
       description: opts.productName,
       amount: opts.totalAmount,
-      category: "Parcela",
+      category: "Consultoria",
       status: "pago",
       dueDate: opts.paidAt,
       paidAt: opts.paidAt,

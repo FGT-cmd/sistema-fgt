@@ -216,9 +216,10 @@ model Sale {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
-  client       Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  servicePlan  ServicePlan? @relation(fields: [servicePlanId], references: [id], onDelete: SetNull)
-  installments Installment[]
+  client          Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  servicePlan     ServicePlan?    @relation(fields: [servicePlanId], references: [id], onDelete: SetNull)
+  installments    Installment[]
+  checkoutSession CheckoutSession?
 }
 
 model Installment {
@@ -617,6 +618,8 @@ model CheckoutSession {
   webhookPayload             Json?
   clientId                   String?  @unique
   client                     Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  saleId                     String?  @unique
+  sale                       Sale?    @relation(fields: [saleId], references: [id], onDelete: SetNull)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }

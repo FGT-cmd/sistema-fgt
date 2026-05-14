@@ -1189,7 +1189,7 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
                 {aluno.phone && (
                   <div className="flex items-center gap-1.5">
                     <a href={`tel:${aluno.phone.replace(/\D/g, "")}`} className="flex items-center gap-1.5 text-gray-700 hover:text-indigo-600 transition-colors">
-                      <Phone className="w-3.5 h-3.5 text-gray-400 shrink-0" />{aluno.phone}
+                      <Phone className="w-3.5 h-3.5 text-gray-400 shrink-0" />{formatPhone(aluno.phone)}
                     </a>
                     <a
                       href={`https://wa.me/55${aluno.phone.replace(/\D/g, "").replace(/^0/, "")}`}
@@ -1213,9 +1213,11 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
                   {aluno.paymentMethod && <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{aluno.paymentMethod}</span>}
                   {aluno.source && <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">📍 {sourceLabel(aluno.source)}</span>}
                 </div>
-                {aluno.planDetails && SPECIAL_PLAN_OPTIONS.some(p => p.value === aluno.planName) && (
+                {aluno.planDetails && (
                   <div className="col-span-2 p-2.5 bg-indigo-50 border border-indigo-100 rounded-lg text-xs text-indigo-800">
-                    <span className="font-bold">{aluno.planName === "Parceria/Collab" ? "Parceria:" : "Personalizado:"}</span> {aluno.planDetails}
+                    <span className="font-bold">
+                      {aluno.planName === "Parceria/Collab" ? "Parceria:" : aluno.source === "checkout_infinitepay" ? "Produto:" : "Personalizado:"}
+                    </span>{" "}{aluno.planDetails}
                   </div>
                 )}
                 {aluno.negotiationNotes && (

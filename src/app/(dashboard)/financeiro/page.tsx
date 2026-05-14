@@ -61,7 +61,7 @@ type Client = { id: string; name: string };
 
 // ─── Constants ───────────────────────────────────────────────────
 const EXPENSE_CATS = ["Ferramenta/Software", "Marketing", "Operação", "Imposto", "Equipe/Serviço", "Despesas Gerais"];
-const INCOME_CATS  = ["Parcela", "Caixa", "Faturamento", "Mensalidade", "Trimestral", "Semestral", "Anual", "Personalizado", "Renovação", "Extra"];
+const INCOME_CATS  = ["Consultoria", "Parcela", "Caixa", "Faturamento", "Mensalidade", "Trimestral", "Semestral", "Anual", "Personalizado", "Renovação", "Extra"];
 const PAYMENT_METHODS = ["Pix", "Débito", "Crédito", "Transferência", "Boleto", "Dinheiro"];
 const STATUSES_RECEITA = [
   { value: "previsto",  label: "PREVISTO" },

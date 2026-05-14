@@ -101,11 +101,22 @@ export async function POST(
     const base = getPublicBaseUrl();
     const orderNsu = `checkout_${token}`;
     const redirectUrl = `${base}/checkout/${encodeURIComponent(token)}?from=infinitepay`;
+    const webhookUrl = `${base}/api/webhooks/infinitepay`;
+
+    console.log("[checkout-submit] payload para InfinitePay:", {
+      handle,
+      orderNsu,
+      redirectUrl,
+      webhookUrl,
+      productName: session.productName,
+      amountCents: session.amountCents,
+    });
 
     const ip = await createInfinitePayCheckoutLink({
       handle,
       orderNsu,
       redirectUrl,
+      webhookUrl,
       items: [
         {
           quantity: 1,
@@ -119,6 +130,11 @@ export async function POST(
         phone_number: toE164Br(phoneDigits),
         document: cpfDigits,
       },
+    });
+
+    console.log("[checkout-submit] resposta InfinitePay:", {
+      checkoutUrl: ip.checkoutUrl,
+      slug: ip.slug,
     });
 
     await prisma.checkoutSession.update({

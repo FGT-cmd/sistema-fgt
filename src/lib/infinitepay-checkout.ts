@@ -6,7 +6,6 @@ export type InfinitePayCreateLinkInput = {
   handle: string;
   orderNsu: string;
   redirectUrl: string;
-  /** Omitido nesta fase (webhook futuro). */
   webhookUrl?: string;
   items: { quantity: number; price: number; description: string }[];
   customer: {

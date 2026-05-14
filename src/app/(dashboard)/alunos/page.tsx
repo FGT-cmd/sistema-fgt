@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, Suspense } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import * as XLSX from "xlsx";
 import {
   Plus, Search, X, Trash2, Phone, Mail, Users, CheckCircle2,
   AlertTriangle, ChevronRight, DollarSign, Edit2, Save, Upload,
   ExternalLink, FileText, Filter, Download, RefreshCw, RefreshCcw, ChevronDown,
   MessageSquare, Check, Circle, Zap, Star, ArrowRight, ListChecks,
+  MessageCircle, Calendar, Loader2, Paperclip,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────
@@ -31,6 +33,7 @@ type ClientTask = {
 type Observacao = { id: string; type: string; content: string; date: string };
 type Aluno = {
   id: string; name: string; email?: string | null; phone?: string | null;
+  cpf?: string | null;
   notes?: string | null; status: string; source?: string | null;
   planName?: string | null; planDetails?: string | null;
   paymentMethod?: string | null; negotiationNotes?: string | null;
@@ -61,6 +64,17 @@ const NEG_TYPES: { value: NegotiationType; label: string; desc: string }[] = [
 
 function statusCfg(s: string) { return STATUS_OPTIONS.find(o => o.value === s) || STATUS_OPTIONS[0]; }
 function getInitials(n: string) { return n.split(" ").slice(0, 2).map(x => x[0]).join("").toUpperCase(); }
+function formatCpf(cpf: string | null | undefined): string {
+  if (!cpf) return "";
+  const d = cpf.replace(/\D/g, "");
+  if (d.length !== 11) return cpf;
+  return `${d.slice(0,3)}.${d.slice(3,6)}.${d.slice(6,9)}-${d.slice(9)}`;
+}
+function sourceLabel(s: string | null | undefined): string {
+  if (!s) return "";
+  if (s === "checkout_infinitepay") return "Checkout InfinitePay";
+  return s;
+}
 function fmt(v: number) { return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v); }
 function fmtDate(d?: string | null) {
   if (!d) return "—";
@@ -921,8 +935,15 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
   const [observacoes, setObservacoes] = useState<Observacao[]>([]);
   const [newObsText, setNewObsText] = useState("");
   const [savingObs, setSavingObs] = useState(false);
-  const [drawerTab, setDrawerTab] = useState<"info" | "tarefas" | "obs">("info");
+  const [drawerTab, setDrawerTab] = useState<"info" | "tarefas" | "obs" | "arquivos">("info");
+  const [files, setFiles] = useState<StudentFile[]>(aluno.files || []);
+  // nova tarefa inline
+  const [newTaskTitle, setNewTaskTitle] = useState("");
+  const [savingTask, setSavingTask] = useState(false);
+  // upload de arquivo avulso
+  const [uploadingFile, setUploadingFile] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const fileAnyRef = useRef<HTMLInputElement>(null);
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
 
   useEffect(() => {
@@ -1007,6 +1028,38 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
     setUploading(false);
   }
 
+  async function handleCreateTask() {
+    if (!newTaskTitle.trim()) return;
+    setSavingTask(true);
+    const res = await fetch("/api/tarefas", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: newTaskTitle.trim(), clientId: aluno.id, type: "student", status: "pending" }),
+    });
+    const task = await res.json();
+    if (task.id) setTasks(prev => [task, ...prev]);
+    setNewTaskTitle("");
+    setSavingTask(false);
+  }
+
+  async function handleCompleteTask(taskId: string) {
+    await fetch(`/api/tarefas/${taskId}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "done" }),
+    });
+    setTasks(prev => prev.filter(t => t.id !== taskId));
+  }
+
+  async function handleAnyFileUpload(file: File) {
+    setUploadingFile(true);
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("category", "outro");
+    const res = await fetch(`/api/alunos/${aluno.id}/arquivos`, { method: "POST", body: fd });
+    const data = await res.json();
+    if (!data.error) setFiles(prev => [data, ...prev]);
+    setUploadingFile(false);
+  }
+
   async function handleDelete() {
     if (!confirm(`Remover ${aluno.name} e todos os dados financeiros vinculados?`)) return;
     const res = await fetch(`/api/alunos/${aluno.id}`, { method: "DELETE" });
@@ -1060,6 +1113,7 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
             { id: "info" as const, label: "Perfil" },
             { id: "tarefas" as const, label: `Tarefas${tasks.length > 0 ? ` (${tasks.length})` : ""}` },
             { id: "obs" as const, label: `Obs.${observacoes.length > 0 ? ` (${observacoes.length})` : ""}` },
+            { id: "arquivos" as const, label: `Arq.${files.length > 0 ? ` (${files.length})` : ""}` },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -1130,13 +1184,34 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
                 </button>
               </div>
             ) : (
+              <>
               <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-                {aluno.phone && <div className="flex items-center gap-1.5 text-gray-700"><Phone className="w-3.5 h-3.5 text-gray-400 shrink-0" />{aluno.phone}</div>}
-                {aluno.email && <div className="flex items-center gap-1.5 text-gray-700 truncate"><Mail className="w-3.5 h-3.5 text-gray-400 shrink-0" /><span className="truncate">{aluno.email}</span></div>}
+                {aluno.phone && (
+                  <div className="flex items-center gap-1.5">
+                    <a href={`tel:${aluno.phone.replace(/\D/g, "")}`} className="flex items-center gap-1.5 text-gray-700 hover:text-indigo-600 transition-colors">
+                      <Phone className="w-3.5 h-3.5 text-gray-400 shrink-0" />{aluno.phone}
+                    </a>
+                    <a
+                      href={`https://wa.me/55${aluno.phone.replace(/\D/g, "").replace(/^0/, "")}`}
+                      target="_blank" rel="noopener noreferrer"
+                      title="Abrir WhatsApp"
+                      className="ml-1 p-1 rounded-lg bg-green-50 text-green-600 hover:bg-green-100 transition-colors"
+                    >
+                      <MessageCircle className="w-3.5 h-3.5" />
+                    </a>
+                  </div>
+                )}
+                {aluno.email && <div className="flex items-center gap-1.5 text-gray-700 truncate"><Mail className="w-3.5 h-3.5 text-gray-400 shrink-0" /><a href={`mailto:${aluno.email}`} className="truncate hover:text-indigo-600 transition-colors">{aluno.email}</a></div>}
+                {aluno.cpf && (
+                  <div className="col-span-2 flex items-center gap-1.5 text-gray-600 text-sm">
+                    <span className="text-[10px] font-semibold text-gray-400 uppercase">CPF</span>
+                    <span>{formatCpf(aluno.cpf)}</span>
+                  </div>
+                )}
                 <div className="col-span-2 flex flex-wrap gap-1.5 mt-1">
                   {aluno.planName && <span className="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full font-medium">{aluno.planName}</span>}
                   {aluno.paymentMethod && <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{aluno.paymentMethod}</span>}
-                  {aluno.source && <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">📍 {aluno.source}</span>}
+                  {aluno.source && <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">📍 {sourceLabel(aluno.source)}</span>}
                 </div>
                 {aluno.planDetails && SPECIAL_PLAN_OPTIONS.some(p => p.value === aluno.planName) && (
                   <div className="col-span-2 p-2.5 bg-indigo-50 border border-indigo-100 rounded-lg text-xs text-indigo-800">
@@ -1151,6 +1226,36 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
                 {aluno.notes && <p className="col-span-2 text-xs text-gray-500 italic">{aluno.notes}</p>}
                 <p className="col-span-2 text-xs text-gray-400">Desde {fmtDate(aluno.createdAt)}</p>
               </div>
+
+              {/* Contexto operacional */}
+              {(() => {
+                const all = sales.flatMap(s => s.installments);
+                const lastPaid = all.filter(i => i.status === "pago" && i.paidAt)
+                  .sort((a, b) => new Date(b.paidAt!).getTime() - new Date(a.paidAt!).getTime())[0];
+                const nextDue = all.filter(i => i.status !== "pago")
+                  .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime())[0];
+                const monthsSince = Math.floor((Date.now() - new Date(aluno.createdAt).getTime()) / (1000 * 60 * 60 * 24 * 30));
+                if (!lastPaid && !nextDue && monthsSince === 0) return null;
+                return (
+                  <div className="mt-3 grid grid-cols-3 gap-2">
+                    <div className="bg-gray-50 rounded-xl p-2.5 text-center border border-gray-100">
+                      <p className="text-[9px] text-gray-400 uppercase font-bold mb-0.5">Membro há</p>
+                      <p className="text-sm font-bold text-gray-700">{monthsSince < 1 ? "<1" : monthsSince} {monthsSince <= 1 ? "mês" : "meses"}</p>
+                    </div>
+                    <div className={`rounded-xl p-2.5 text-center border ${lastPaid ? "bg-green-50 border-green-100" : "bg-gray-50 border-gray-100"}`}>
+                      <p className="text-[9px] text-gray-400 uppercase font-bold mb-0.5">Último pag.</p>
+                      <p className="text-xs font-bold text-gray-700">{lastPaid ? fmtDate(lastPaid.paidAt) : "—"}</p>
+                    </div>
+                    <div className={`rounded-xl p-2.5 text-center border ${nextDue && new Date(nextDue.dueDate) < new Date() ? "bg-red-50 border-red-100" : "bg-amber-50 border-amber-100"}`}>
+                      <p className="text-[9px] text-gray-400 uppercase font-bold mb-0.5">Próx. venc.</p>
+                      <p className={`text-xs font-bold ${nextDue && new Date(nextDue.dueDate) < new Date() ? "text-red-600" : "text-amber-700"}`}>
+                        {nextDue ? fmtDate(nextDue.dueDate) : "—"}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
+              </>
             )}
           </div>
 
@@ -1308,11 +1413,31 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
                   <ListChecks className="w-3.5 h-3.5" /> Tarefas vinculadas
                 </span>
                 <a href="/tarefas" className="text-xs text-indigo-600 flex items-center gap-1 hover:underline">
-                  Gerenciar <ArrowRight className="w-3 h-3" />
+                  Ver todas <ArrowRight className="w-3 h-3" />
                 </a>
               </div>
+
+              {/* Nova tarefa rápida */}
+              <div className="flex gap-2 mb-4">
+                <input
+                  value={newTaskTitle}
+                  onChange={e => setNewTaskTitle(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") handleCreateTask(); }}
+                  placeholder="Nova tarefa para este aluno... (Enter)"
+                  className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400"
+                />
+                <button
+                  onClick={handleCreateTask}
+                  disabled={savingTask || !newTaskTitle.trim()}
+                  className="px-3 py-2 rounded-lg text-sm text-white disabled:opacity-50"
+                  style={{ background: "#6366f1" }}
+                >
+                  {savingTask ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                </button>
+              </div>
+
               {tasks.length === 0 ? (
-                <div className="text-center py-6">
+                <div className="text-center py-4">
                   <Check className="w-6 h-6 text-green-400 mx-auto mb-2" />
                   <p className="text-xs text-gray-400">Nenhuma tarefa pendente para este aluno.</p>
                 </div>
@@ -1324,7 +1449,13 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
                       <div key={task.id} className={`flex items-start gap-2 p-2.5 rounded-xl border ${
                         isOverdueTask ? "bg-red-50 border-red-100" : "bg-gray-50 border-gray-100"
                       }`}>
-                        <Circle className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${isOverdueTask ? "text-red-400" : "text-gray-300"}`} />
+                        <button
+                          onClick={() => handleCompleteTask(task.id)}
+                          className={`mt-0.5 w-4 h-4 rounded-full border-2 shrink-0 hover:border-indigo-500 transition-colors flex items-center justify-center ${
+                            isOverdueTask ? "border-red-300" : "border-gray-300"
+                          }`}
+                          title="Marcar como feita"
+                        />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1">
                             {task.urgent && <Zap className="w-3 h-3 text-red-500 shrink-0" />}
@@ -1387,6 +1518,63 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
               )}
             </div>
           )}
+          {/* ── Tab: Arquivos ──────────────────── */}
+          {drawerTab === "arquivos" && (
+            <div className="px-5 py-4">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[11px] font-bold text-gray-400 uppercase flex items-center gap-1.5">
+                  <Paperclip className="w-3.5 h-3.5" /> Arquivos
+                </span>
+                <button
+                  onClick={() => fileAnyRef.current?.click()}
+                  disabled={uploadingFile}
+                  className="text-xs text-indigo-600 flex items-center gap-1 hover:underline disabled:opacity-50"
+                >
+                  {uploadingFile ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                  Enviar arquivo
+                </button>
+                <input
+                  ref={fileAnyRef}
+                  type="file"
+                  className="hidden"
+                  onChange={e => { if (e.target.files?.[0]) handleAnyFileUpload(e.target.files[0]); }}
+                />
+              </div>
+
+              {files.length === 0 ? (
+                <div className="text-center py-8">
+                  <button
+                    onClick={() => fileAnyRef.current?.click()}
+                    className="flex flex-col items-center gap-2 mx-auto text-gray-400 hover:text-indigo-500 transition-colors"
+                  >
+                    <Paperclip className="w-8 h-8 text-gray-200" />
+                    <p className="text-xs">Nenhum arquivo. Clique para enviar.</p>
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {files.map(f => (
+                    <div key={f.id} className="flex items-center gap-3 p-2.5 rounded-xl border border-gray-100 bg-gray-50">
+                      <FileText className="w-4 h-4 text-gray-400 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-gray-700 truncate">{f.name}</p>
+                        <p className="text-[10px] text-gray-400">{f.category}</p>
+                      </div>
+                      {f.url.startsWith("data:") ? (
+                        <a href={f.url} download={f.name} className="p-1 rounded hover:bg-indigo-50 text-gray-400 hover:text-indigo-600 transition-colors">
+                          <Download className="w-3.5 h-3.5" />
+                        </a>
+                      ) : (
+                        <a href={f.url} target="_blank" rel="noopener noreferrer" className="p-1 rounded hover:bg-indigo-50 text-gray-400 hover:text-indigo-600 transition-colors">
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="px-5 py-4 border-t border-gray-100 shrink-0">
@@ -1401,7 +1589,9 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
 }
 
 // ─── Página principal ─────────────────────────────────────────────
-export default function AlunosPage() {
+function AlunosPageContent() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
   const [alunos, setAlunos] = useState<Aluno[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -1424,10 +1614,17 @@ export default function AlunosPage() {
   const load = useCallback(() => {
     setLoading(true);
     fetch("/api/alunos").then(r => r.json()).then(data => {
-      setAlunos(Array.isArray(data) ? data : []);
+      const list: Aluno[] = Array.isArray(data) ? data : [];
+      setAlunos(list);
       setLoading(false);
+      // suporte a ?open=<id> — abre o drawer automaticamente
+      const openId = searchParams.get("open");
+      if (openId) {
+        const target = list.find(a => a.id === openId);
+        if (target) setSelected(target);
+      }
     });
-  }, []);
+  }, [searchParams]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -1549,7 +1746,9 @@ export default function AlunosPage() {
       {/* Lista */}
       <div className="flex-1 p-6">
         {loading ? (
-          <div className="flex items-center justify-center py-32 text-gray-400 text-sm">Carregando...</div>
+          <div className="flex items-center justify-center py-32 gap-2 text-gray-400 text-sm">
+            <Loader2 className="w-5 h-5 animate-spin text-indigo-400" /> Carregando alunos...
+          </div>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-32 text-gray-400">
             <Users className="w-10 h-10 mb-2 text-gray-200" />
@@ -1635,10 +1834,31 @@ export default function AlunosPage() {
       {showImport && <ImportModal onClose={() => setShowImport(false)} onImport={() => { setShowImport(false); load(); }} />}
       {selected && (
         <AlunoDrawer aluno={selected} autoOpenPayForm={autoOpenPay} plans={plans}
-          onClose={() => { setSelected(null); setAutoOpenPay(false); }}
+          onClose={() => {
+            setSelected(null);
+            setAutoOpenPay(false);
+            if (searchParams.get("open")) router.replace("/alunos");
+          }}
           onUpdate={a => { setAlunos(prev => prev.map(x => x.id === a.id ? a : x)); setSelected(a); }}
-          onDelete={id => { setAlunos(prev => prev.filter(x => x.id !== id)); setSelected(null); setAutoOpenPay(false); }} />
+          onDelete={id => {
+            setAlunos(prev => prev.filter(x => x.id !== id));
+            setSelected(null);
+            setAutoOpenPay(false);
+            if (searchParams.get("open")) router.replace("/alunos");
+          }} />
       )}
     </div>
+  );
+}
+
+export default function AlunosPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center min-h-screen gap-2 text-gray-400 text-sm">
+        <Loader2 className="w-5 h-5 animate-spin text-indigo-400" /> Carregando...
+      </div>
+    }>
+      <AlunosPageContent />
+    </Suspense>
   );
 }

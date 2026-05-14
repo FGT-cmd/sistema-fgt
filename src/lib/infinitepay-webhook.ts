@@ -62,11 +62,15 @@ export type WebhookProcessResult =
 export async function processInfinitePayWebhook(
   body: InfinitePayWebhookBody,
 ): Promise<WebhookProcessResult> {
-  if (!isPaidWebhook(body)) {
+  const paidFlag = isPaidWebhook(body);
+  console.log("[checkout-webhook] isPaidWebhook:", paidFlag);
+  if (!paidFlag) {
+    console.log("[checkout-webhook] evento ignorado — motivo: not_paid");
     return { kind: "ignored", reason: "not_paid" };
   }
 
   const orderNsu = extractOrderNsu(body);
+  console.log("[checkout-webhook] order_nsu extraído:", orderNsu);
   if (!orderNsu) {
     return { kind: "error", httpStatus: 400, message: "order_nsu ausente." };
   }
@@ -75,15 +79,22 @@ export async function processInfinitePayWebhook(
     where: { infinitepayOrderNsu: orderNsu },
   });
 
+  console.log("[checkout-webhook] CheckoutSession encontrada:", session ? `id=${session.id} token=${session.token}` : "NÃO ENCONTRADA");
+
   if (!session) {
+    console.log("[checkout-webhook] evento ignorado — motivo: session_not_found (order_nsu:", orderNsu, ")");
     return { kind: "ignored", reason: "session_not_found" };
   }
 
+  console.log("[checkout-webhook] status atual da sessão:", session.status);
+
   if (session.status === "paid") {
+    console.log("[checkout-webhook] idempotente — sessão já estava paga");
     return { kind: "ok", idempotent: true };
   }
 
   if (session.status === "pending_customer_data") {
+    console.log("[checkout-webhook] erro — sessão incompleta (pending_customer_data)");
     return { kind: "error", httpStatus: 409, message: "checkout_incomplete" };
   }
 
@@ -95,8 +106,11 @@ export async function processInfinitePayWebhook(
   const paidAt = new Date();
   const payloadJson = body as Prisma.InputJsonValue;
 
+  console.log("[checkout-webhook] dados extraídos:", { txNsu, captureMethod, paymentMethod, paidAmountCents });
+
   const customerName = session.customerName?.trim();
   if (!customerName) {
+    console.log("[checkout-webhook] erro — customerName ausente na sessão id:", session.id);
     return { kind: "error", httpStatus: 409, message: "missing_customer_name" };
   }
 
@@ -118,19 +132,25 @@ export async function processInfinitePayWebhook(
       },
     });
 
+    console.log("[checkout-webhook] tentativa de marcar sessão como paid — claimed.count:", claimed.count);
+
     if (claimed.count === 0) {
       const other = await tx.checkoutSession.findUnique({ where: { id: session.id } });
       if (other?.status === "paid") {
+        console.log("[checkout-webhook] race condition resolvida — já está paid");
         idempotentRace = true;
         return;
       }
       throw new Error("checkout_race_unresolved");
     }
 
+    console.log("[checkout-webhook] sessão atualizada: status", session.status, "→ paid");
+
     const fresh = await tx.checkoutSession.findUnique({ where: { id: session.id } });
     if (!fresh) throw new Error("session_missing");
 
     if (fresh.clientId) {
+      console.log("[checkout-webhook] client reutilizado id:", fresh.clientId, "— atualizando paymentMethod para:", paymentMethod);
       await tx.client.update({
         where: { id: fresh.clientId },
         data: { paymentMethod },
@@ -138,6 +158,7 @@ export async function processInfinitePayWebhook(
       return;
     }
 
+    console.log("[checkout-webhook] criando novo client para:", customerName);
     const client = await tx.client.create({
       data: {
         name: customerName,
@@ -155,6 +176,7 @@ export async function processInfinitePayWebhook(
       },
     });
 
+    console.log("[checkout-webhook] client criado id:", client.id, "— vinculando à sessão");
     await tx.checkoutSession.update({
       where: { id: fresh.id },
       data: { clientId: client.id },

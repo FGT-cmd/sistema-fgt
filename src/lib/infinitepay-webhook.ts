@@ -84,7 +84,6 @@ async function createFinancialChain(
       clientId: opts.clientId,
     },
   });
-  console.log("[checkout-webhook] Sale criada id:", sale.id);
 
   const installment = await tx.installment.create({
     data: {
@@ -97,7 +96,6 @@ async function createFinancialChain(
       saleId: sale.id,
     },
   });
-  console.log("[checkout-webhook] Installment criada id:", installment.id);
 
   await tx.financialTx.create({
     data: {
@@ -113,27 +111,21 @@ async function createFinancialChain(
       installmentId: installment.id,
     },
   });
-  console.log("[checkout-webhook] FinancialTx criada");
 
   await tx.checkoutSession.update({
     where: { id: opts.sessionId },
     data: { saleId: sale.id },
   });
-  console.log("[checkout-webhook] CheckoutSession.saleId vinculado:", sale.id);
 }
 
 export async function processInfinitePayWebhook(
   body: InfinitePayWebhookBody,
 ): Promise<WebhookProcessResult> {
-  const paidFlag = isPaidWebhook(body);
-  console.log("[checkout-webhook] isPaidWebhook:", paidFlag);
-  if (!paidFlag) {
-    console.log("[checkout-webhook] evento ignorado — motivo: not_paid");
+  if (!isPaidWebhook(body)) {
     return { kind: "ignored", reason: "not_paid" };
   }
 
   const orderNsu = extractOrderNsu(body);
-  console.log("[checkout-webhook] order_nsu extraído:", orderNsu);
   if (!orderNsu) {
     return { kind: "error", httpStatus: 400, message: "order_nsu ausente." };
   }
@@ -142,33 +134,20 @@ export async function processInfinitePayWebhook(
     where: { infinitepayOrderNsu: orderNsu },
   });
 
-  console.log(
-    "[checkout-webhook] CheckoutSession encontrada:",
-    session ? `id=${session.id} token=${session.token}` : "NÃO ENCONTRADA",
-  );
-
   if (!session) {
-    console.log("[checkout-webhook] evento ignorado — motivo: session_not_found (order_nsu:", orderNsu, ")");
     return { kind: "ignored", reason: "session_not_found" };
   }
 
-  console.log("[checkout-webhook] status atual da sessão:", session.status, "saleId:", session.saleId);
-
   // ─── Sessão já paga: caminho de reparo ────────────────────────────────────
   if (session.status === "paid") {
-    console.log("[checkout-webhook] sessão já está paid — verificando consistência");
-
     const captureMethod = extractCaptureMethod(body);
     const paymentMethod = mapCaptureMethodToPaymentMethod(captureMethod);
 
     // Reparo 1: clientId ausente
     let resolvedClientId = session.clientId;
     if (!resolvedClientId) {
-      console.log("[checkout-webhook] [reparação] clientId ausente — tentando criar ou vincular client");
-
       const customerName = session.customerName?.trim();
       if (!customerName) {
-        console.log("[checkout-webhook] [reparação] customerName vazio — impossível criar client");
         return { kind: "ok", idempotent: true };
       }
 
@@ -182,19 +161,16 @@ export async function processInfinitePayWebhook(
         : null;
 
       if (existing) {
-        console.log("[checkout-webhook] [reparação] client existente encontrado id:", existing.id, "— vinculando");
         try {
           await prisma.$transaction(async (tx) => {
             await tx.checkoutSession.update({ where: { id: session.id }, data: { clientId: existing.id } });
             if (!existing.paymentMethod) {
-              console.log("[checkout-webhook] [reparação] preenchendo paymentMethod no client id:", existing.id);
               await tx.client.update({ where: { id: existing.id }, data: { paymentMethod } });
             }
           });
         } catch (e: unknown) {
           // P2002 = unique constraint — client já vinculado a outra sessão
           if ((e as { code?: string }).code === "P2002") {
-            console.log("[checkout-webhook] [reparação] client já vinculado a outra sessão — apenas reparando paymentMethod");
             if (!existing.paymentMethod) {
               await prisma.client.update({ where: { id: existing.id }, data: { paymentMethod } });
             }
@@ -204,7 +180,6 @@ export async function processInfinitePayWebhook(
         }
         resolvedClientId = existing.id;
       } else {
-        console.log("[checkout-webhook] [reparação] nenhum client encontrado — criando novo para:", customerName);
         await prisma.$transaction(async (tx) => {
           const client = await tx.client.create({
             data: {
@@ -222,7 +197,6 @@ export async function processInfinitePayWebhook(
               userId: user.id,
             },
           });
-          console.log("[checkout-webhook] [reparação] client criado id:", client.id, "— vinculando à sessão");
           await tx.checkoutSession.update({ where: { id: session.id }, data: { clientId: client.id } });
           resolvedClientId = client.id;
         });
@@ -231,19 +205,16 @@ export async function processInfinitePayWebhook(
       // Reparo 2: paymentMethod ausente no client existente
       const client = await prisma.client.findUnique({ where: { id: resolvedClientId } });
       if (client && !client.paymentMethod) {
-        console.log("[checkout-webhook] [reparação] paymentMethod ausente no client id:", client.id, "— preenchendo:", paymentMethod);
         await prisma.client.update({ where: { id: client.id }, data: { paymentMethod } });
       }
     }
 
     if (!resolvedClientId) {
-      console.log("[checkout-webhook] [reparação] sem clientId resolvido — não é possível criar financeiro");
       return { kind: "ok", idempotent: true };
     }
 
     // Reparo 3: registros financeiros ausentes
     if (!session.saleId) {
-      console.log("[checkout-webhook] [reparação] saleId ausente — criando registros financeiros");
       const totalAmount = (session.paidAmountCents ?? session.amountCents) / 100;
       const paidAt = session.paidAt ?? new Date();
 
@@ -258,17 +229,13 @@ export async function processInfinitePayWebhook(
           orderNsu,
         });
       });
-    } else {
-      console.log("[checkout-webhook] saleId já presente:", session.saleId, "— financeiro consistente");
     }
 
-    console.log("[checkout-webhook] idempotente — reparo concluído ou estado já consistente");
     return { kind: "ok", idempotent: true };
   }
 
   // ─── Sessão ainda não paga: caminho principal ─────────────────────────────
   if (session.status === "pending_customer_data") {
-    console.log("[checkout-webhook] erro — sessão incompleta (pending_customer_data)");
     return { kind: "error", httpStatus: 409, message: "checkout_incomplete" };
   }
 
@@ -280,11 +247,8 @@ export async function processInfinitePayWebhook(
   const paidAt = new Date();
   const payloadJson = body as Prisma.InputJsonValue;
 
-  console.log("[checkout-webhook] dados extraídos:", { txNsu, captureMethod, paymentMethod, paidAmountCents });
-
   const customerName = session.customerName?.trim();
   if (!customerName) {
-    console.log("[checkout-webhook] erro — customerName ausente na sessão id:", session.id);
     return { kind: "error", httpStatus: 409, message: "missing_customer_name" };
   }
 
@@ -306,19 +270,14 @@ export async function processInfinitePayWebhook(
       },
     });
 
-    console.log("[checkout-webhook] tentativa de marcar sessão como paid — claimed.count:", claimed.count);
-
     if (claimed.count === 0) {
       const other = await tx.checkoutSession.findUnique({ where: { id: session.id } });
       if (other?.status === "paid") {
-        console.log("[checkout-webhook] race condition resolvida — já está paid");
         idempotentRace = true;
         return;
       }
       throw new Error("checkout_race_unresolved");
     }
-
-    console.log("[checkout-webhook] sessão atualizada: status", session.status, "→ paid");
 
     const fresh = await tx.checkoutSession.findUnique({ where: { id: session.id } });
     if (!fresh) throw new Error("session_missing");
@@ -326,11 +285,9 @@ export async function processInfinitePayWebhook(
     // Garantir client
     let resolvedClientId: string;
     if (fresh.clientId) {
-      console.log("[checkout-webhook] client reutilizado id:", fresh.clientId, "— atualizando paymentMethod para:", paymentMethod);
       await tx.client.update({ where: { id: fresh.clientId }, data: { paymentMethod } });
       resolvedClientId = fresh.clientId;
     } else {
-      console.log("[checkout-webhook] criando novo client para:", customerName);
       const client = await tx.client.create({
         data: {
           name: customerName,
@@ -347,13 +304,11 @@ export async function processInfinitePayWebhook(
           userId: user.id,
         },
       });
-      console.log("[checkout-webhook] client criado id:", client.id, "— vinculando à sessão");
       await tx.checkoutSession.update({ where: { id: fresh.id }, data: { clientId: client.id } });
       resolvedClientId = client.id;
     }
 
     // Criar registros financeiros
-    console.log("[checkout-webhook] criando registros financeiros — totalAmount:", totalAmount, "paymentMethod:", paymentMethod);
     await createFinancialChain(tx, {
       sessionId: fresh.id,
       clientId: resolvedClientId,

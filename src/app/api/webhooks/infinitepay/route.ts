@@ -24,23 +24,10 @@ export async function POST(req: NextRequest) {
 
     const body = (await req.json().catch(() => null)) as InfinitePayWebhookBody | null;
     if (!body || typeof body !== "object") {
-      console.warn("[checkout-webhook] payload inválido ou body vazio");
       return NextResponse.json({ ok: false, message: "invalid_json" }, { status: 400 });
     }
 
-    console.log("[checkout-webhook] payload recebido:", {
-      order_nsu: body.order_nsu ?? body.orderNsu,
-      transaction_nsu: body.transaction_nsu ?? body.transactionNsu,
-      status: body.status,
-      paid: body.paid,
-      capture_method: body.capture_method ?? body.captureMethod,
-      paid_amount: body.paid_amount ?? body.paidAmount ?? body.amount,
-      receipt_url: body.receipt_url ?? body.receiptUrl,
-    });
-
     const result = await processInfinitePayWebhook(body);
-
-    console.log("[checkout-webhook] resultado final:", result);
 
     if (result.kind === "error") {
       return NextResponse.json(

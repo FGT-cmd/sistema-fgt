@@ -111,6 +111,7 @@ model Client {
   files          StudentFile[]
   todoTasks      TodoTask[]
   invoiceIssues  InvoiceIssue[]
+  studentJourney StudentJourney?
 }
 
 model Deal {
@@ -263,6 +264,7 @@ model Sale {
   installments    Installment[]
   checkoutSession CheckoutSession?
   invoiceIssues   InvoiceIssue[]
+  studentJourneys StudentJourney[]
 }
 
 model Installment {
@@ -665,5 +667,34 @@ model CheckoutSession {
   sale                       Sale?    @relation(fields: [saleId], references: [id], onDelete: SetNull)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
-  invoiceIssues InvoiceIssue[]
+  invoiceIssues   InvoiceIssue[]
+  studentJourneys StudentJourney[]
+}
+
+// Jornada do Aluno — CRM de Alunos (Fase 1)
+// stage: alunos_novos | semana_1..5 | atualizacao_treino | pausado
+model StudentJourney {
+  id                       String    @id @default(cuid())
+  clientId                 String    @unique
+  checkoutSessionId        String?
+  saleId                   String?
+  stage                    String    @default("alunos_novos")
+  cycleStartDate           DateTime?
+  currentCycleNumber       Int       @default(1)
+  cycleLengthWeeks         Int       @default(5)
+  planStartDate            DateTime
+  planExpiresAt            DateTime?
+  lastContactAt            DateTime?
+  nextActionAt             DateTime?
+  birthdayAutomationSentAt DateTime?
+  d7SentAt                 DateTime?
+  d21SentAt                DateTime?
+  isPaused                 Boolean   @default(false)
+  notes                    String?
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+
+  client          Client           @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  checkoutSession CheckoutSession? @relation(fields: [checkoutSessionId], references: [id], onDelete: SetNull)
+  sale            Sale?            @relation(fields: [saleId], references: [id], onDelete: SetNull)
 }

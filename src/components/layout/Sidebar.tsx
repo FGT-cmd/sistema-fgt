@@ -13,6 +13,7 @@ import {
   Calendar,
   Settings,
   FolderOpen,
+  GraduationCap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -26,10 +27,11 @@ const primaryNav = [
 
 // Secondary modules
 const secondaryNav = [
-  { href: "/crm",        icon: FolderKanban, label: "CRM" },
-  { href: "/agenda",     icon: Calendar,     label: "Agenda" },
-  { href: "/projetos",   icon: FolderOpen,   label: "Projetos" },
-  { href: "/openclaw",   icon: Bot,          label: "OpenClaw" },
+  { href: "/crm",          icon: FolderKanban,  label: "CRM" },
+  { href: "/crm-alunos",   icon: GraduationCap, label: "CRM Alunos" },
+  { href: "/agenda",       icon: Calendar,      label: "Agenda" },
+  { href: "/projetos",     icon: FolderOpen,    label: "Projetos" },
+  { href: "/openclaw",     icon: Bot,           label: "OpenClaw" },
 ];
 
 // Coming soon (greyed out, no href)

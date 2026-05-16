@@ -43,6 +43,39 @@ export function isPaidWebhook(body: InfinitePayWebhookBody): boolean {
   return true;
 }
 
+function derivePlanExpiresAt(productName: string, from: Date): Date | null {
+  const name = productName.toLowerCase();
+  const d = new Date(from);
+  if (name.includes("trimestral")) { d.setMonth(d.getMonth() + 3); return d; }
+  if (name.includes("semestral"))  { d.setMonth(d.getMonth() + 6); return d; }
+  if (name.includes("anual"))      { d.setMonth(d.getMonth() + 12); return d; }
+  return null;
+}
+
+async function createStudentJourneyIfNeeded(opts: {
+  clientId: string;
+  checkoutSessionId: string;
+  saleId: string | null;
+  productName: string;
+  planStartDate: Date;
+}): Promise<void> {
+  const existing = await prisma.studentJourney.findUnique({ where: { clientId: opts.clientId } });
+  if (existing) return;
+  await prisma.studentJourney.create({
+    data: {
+      clientId: opts.clientId,
+      checkoutSessionId: opts.checkoutSessionId,
+      saleId: opts.saleId ?? null,
+      stage: "alunos_novos",
+      currentCycleNumber: 1,
+      cycleLengthWeeks: 5,
+      planStartDate: opts.planStartDate,
+      planExpiresAt: derivePlanExpiresAt(opts.productName, opts.planStartDate),
+      isPaused: false,
+    },
+  });
+}
+
 /** Forma de pagamento alinhada ao restante do sistema. */
 export function mapCaptureMethodToPaymentMethod(capture: string | null): string {
   const c = (capture ?? "").toLowerCase().replace(/-/g, "_");
@@ -218,6 +251,7 @@ export async function processInfinitePayWebhook(
     }
 
     // Reparo 3: registros financeiros ausentes
+    let resolvedSaleId: string | null = session.saleId;
     if (!session.saleId) {
       const totalAmount = (session.paidAmountCents ?? session.amountCents) / 100;
       const paidAt = session.paidAt ?? new Date();
@@ -233,6 +267,7 @@ export async function processInfinitePayWebhook(
           orderNsu,
         });
       });
+      resolvedSaleId = chainResult.saleId;
 
       // Criar InvoiceIssue se ainda não existir para esta sessão
       const existingInvoice = await prisma.invoiceIssue.findFirst({
@@ -259,6 +294,14 @@ export async function processInfinitePayWebhook(
       }
     }
 
+    await createStudentJourneyIfNeeded({
+      clientId: resolvedClientId!,
+      checkoutSessionId: session.id,
+      saleId: resolvedSaleId,
+      productName: session.productName,
+      planStartDate: session.paidAt ?? new Date(),
+    });
+
     return { kind: "ok", idempotent: true };
   }
 
@@ -283,6 +326,8 @@ export async function processInfinitePayWebhook(
   const user = await getDefaultUser();
   const totalAmount = (paidAmountCents ?? session.amountCents) / 100;
   let idempotentRace = false;
+  let capturedClientId: string | null = null;
+  let capturedSaleId: string | null = null;
 
   await prisma.$transaction(async (tx) => {
     const claimed = await tx.checkoutSession.updateMany({
@@ -347,6 +392,9 @@ export async function processInfinitePayWebhook(
       orderNsu,
     });
 
+    capturedClientId = resolvedClientId;
+    capturedSaleId = saleId;
+
     await tx.invoiceIssue.create({
       data: {
         clientId:          resolvedClientId,
@@ -368,6 +416,16 @@ export async function processInfinitePayWebhook(
 
   if (idempotentRace) {
     return { kind: "ok", idempotent: true };
+  }
+
+  if (capturedClientId) {
+    await createStudentJourneyIfNeeded({
+      clientId: capturedClientId,
+      checkoutSessionId: session.id,
+      saleId: capturedSaleId,
+      productName: session.productName,
+      planStartDate: paidAt,
+    });
   }
 
   return { kind: "ok" };

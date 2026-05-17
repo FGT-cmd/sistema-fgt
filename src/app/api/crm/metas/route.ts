@@ -25,30 +25,30 @@ export async function PUT(req: NextRequest) {
   try {
     const user = await getDefaultUser();
     const body = await req.json();
-    const { month, year, revenueGoal, newClientsGoal, leadsGoal, conversionGoal, notes, items } = body;
+    const {
+      month, year,
+      revenueGoal, newClientsGoal, leadsGoal, conversionGoal,
+      averageTicketGoal, closingRateGoal, qualificationRateGoal,
+      notes, items,
+    } = body;
+
+    const goalData = {
+      revenueGoal:           revenueGoal           ?? 0,
+      newClientsGoal:        newClientsGoal         ?? 0,
+      leadsGoal:             leadsGoal              ?? 0,
+      conversionGoal:        conversionGoal         ?? 0,
+      averageTicketGoal:     averageTicketGoal      ?? 0,
+      closingRateGoal:       closingRateGoal        ?? 0,
+      qualificationRateGoal: qualificationRateGoal  ?? 0,
+      notes:                 notes ?? null,
+    };
 
     const goal = await prisma.monthlyGoal.upsert({
       where: { userId_month_year: { userId: user.id, month, year } },
-      create: {
-        userId: user.id,
-        month,
-        year,
-        revenueGoal:    revenueGoal    ?? 0,
-        newClientsGoal: newClientsGoal ?? 0,
-        leadsGoal:      leadsGoal      ?? 0,
-        conversionGoal: conversionGoal ?? 0,
-        notes:          notes ?? null,
-      },
-      update: {
-        revenueGoal:    revenueGoal    ?? 0,
-        newClientsGoal: newClientsGoal ?? 0,
-        leadsGoal:      leadsGoal      ?? 0,
-        conversionGoal: conversionGoal ?? 0,
-        notes:          notes ?? null,
-      },
+      create: { userId: user.id, month, year, ...goalData },
+      update: goalData,
     });
 
-    // Replace items
     await prisma.goalItem.deleteMany({ where: { goalId: goal.id } });
     if (Array.isArray(items) && items.length > 0) {
       await prisma.goalItem.createMany({

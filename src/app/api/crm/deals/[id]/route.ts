@@ -8,29 +8,31 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const deal = await prisma.deal.update({
     where: { id },
     data: {
-      ...(body.stage !== undefined && { stage: body.stage }),
-      ...(body.title !== undefined && { title: body.title }),
-      ...(body.value !== undefined && { value: body.value ? parseFloat(String(body.value)) : null }),
-      ...(body.priority !== undefined && { priority: body.priority }),
-      ...(body.nextAction !== undefined && { nextAction: body.nextAction || null }),
-      ...(body.notes !== undefined && { notes: body.notes || null }),
-      ...(body.source !== undefined && { source: body.source || null }),
-      ...(body.funnel !== undefined && { funnel: body.funnel || null }),
-      ...(body.objectives !== undefined && { objectives: body.objectives || null }),
-      ...(body.firstContact !== undefined && { firstContact: new Date(body.firstContact) }),
-      ...(body.clientName !== undefined && {}),
+      ...(body.stage          !== undefined && { stage:          body.stage }),
+      ...(body.title          !== undefined && { title:          body.title }),
+      ...(body.value          !== undefined && { value:          body.value          ? parseFloat(String(body.value))          : null }),
+      ...(body.potentialValue !== undefined && { potentialValue: body.potentialValue ? parseFloat(String(body.potentialValue)) : null }),
+      ...(body.closedValue    !== undefined && { closedValue:    body.closedValue    ? parseFloat(String(body.closedValue))    : null }),
+      ...(body.priority       !== undefined && { priority:       body.priority }),
+      ...(body.nextAction     !== undefined && { nextAction:     body.nextAction  || null }),
+      ...(body.notes          !== undefined && { notes:          body.notes       || null }),
+      ...(body.objection      !== undefined && { objection:      body.objection   || null }),
+      ...(body.source         !== undefined && { source:         body.source      || null }),
+      ...(body.funnel         !== undefined && { funnel:         body.funnel      || null }),
+      ...(body.objectives     !== undefined && { objectives:     body.objectives  || null }),
+      ...(body.firstContact   !== undefined && { firstContact:   new Date(body.firstContact) }),
     },
-    include: { client: { select: { id: true, name: true, phone: true, email: true } } },
+    include: { client: { select: { id: true, name: true, phone: true, email: true, instagram: true } } },
   });
 
-  // Atualiza dados do cliente se enviados
-  if (body.clientName || body.clientEmail || body.clientPhone) {
+  if (body.clientName || body.clientEmail !== undefined || body.clientPhone !== undefined || body.clientInstagram !== undefined) {
     await prisma.client.update({
       where: { id: deal.clientId },
       data: {
-        ...(body.clientName && { name: body.clientName }),
-        ...(body.clientEmail !== undefined && { email: body.clientEmail || null }),
-        ...(body.clientPhone !== undefined && { phone: body.clientPhone || null }),
+        ...(body.clientName      && { name:      body.clientName }),
+        ...(body.clientEmail     !== undefined && { email:     body.clientEmail     || null }),
+        ...(body.clientPhone     !== undefined && { phone:     body.clientPhone     || null }),
+        ...(body.clientInstagram !== undefined && { instagram: body.clientInstagram || null }),
       },
     });
   }

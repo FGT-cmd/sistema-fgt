@@ -84,6 +84,7 @@ model Client {
   notes             String?
   status            String   @default("lead")
   source            String?
+  instagram         String?
   planName          String?
   planDetails       String?
   paymentMethod     String?
@@ -117,16 +118,19 @@ model Client {
 model Deal {
   id            String    @id @default(cuid())
   title         String
-  value         Float?
-  stage         String    @default("lead")
-  priority      String    @default("medium")
-  nextAction    String?
-  expectedClose DateTime?
-  notes         String?
-  position      Int       @default(0)
-  source        String?
-  funnel        String?
-  objectives    String?
+  value          Float?
+  potentialValue Float?
+  closedValue    Float?
+  stage          String    @default("novo_lead")
+  priority       String    @default("medium")
+  nextAction     String?
+  expectedClose  DateTime?
+  notes          String?
+  objection      String?
+  position       Int       @default(0)
+  source         String?
+  funnel         String?
+  objectives     String?
   firstContact  DateTime  @default(now())
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -481,11 +485,14 @@ model MonthlyGoal {
   id              String     @id @default(cuid())
   month           Int
   year            Int
-  revenueGoal     Float      @default(0)
-  newClientsGoal  Int        @default(0)
-  leadsGoal       Int        @default(0)
-  conversionGoal  Float      @default(0)
-  notes           String?
+  revenueGoal           Float      @default(0)
+  newClientsGoal        Int        @default(0)
+  leadsGoal             Int        @default(0)
+  conversionGoal        Float      @default(0)
+  averageTicketGoal     Float      @default(0)
+  closingRateGoal       Float      @default(0)
+  qualificationRateGoal Float      @default(0)
+  notes                 String?
   userId          String
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt

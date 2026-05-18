@@ -37,6 +37,7 @@ type Installment = {
   status: string;
   notes?: string | null;
   label?: string | null;
+  paymentMethod?: string | null;
 };
 
 type Sale = {
@@ -79,7 +80,7 @@ const STATUSES_DESPESA = [
 ];
 const MONTHS = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
 
-type TabKey = "fluxo" | "pagar" | "faturamento" | "parcelas" | "alertas";
+type TabKey = "resumo" | "recebiveis" | "cobranças" | "vendas" | "pagar";
 
 // ─── Helpers ─────────────────────────────────────────────────────
 function fmt(v: number) {
@@ -913,6 +914,158 @@ function ParcelasReceber({ sales, clients, onToggleParcela, onAddSale, onDeleteS
   );
 }
 
+// ─── Tab: Vendas ──────────────────────────────────────────────────
+const NEG_TYPE_MAP: Record<string, { label: string; cls: string }> = {
+  cash:   { label: "À vista",           cls: "bg-green-100 text-green-700" },
+  pix:    { label: "Pix parcelado",     cls: "bg-blue-100 text-blue-700" },
+  card:   { label: "Cartão antecipado", cls: "bg-purple-100 text-purple-700" },
+  custom: { label: "Personalizado",     cls: "bg-gray-100 text-gray-600" },
+};
+
+function VendasTab({ sales, clients, onToggleParcela, onAddSale, onDeleteSale }: {
+  sales: Sale[];
+  clients: Client[];
+  onToggleParcela: (saleId: string, parcelaId: string, status: string) => void;
+  onAddSale: (sale: Sale) => void;
+  onDeleteSale: (saleId: string) => void;
+}) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [showModal, setShowModal] = useState(false);
+
+  const now = new Date();
+  const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
+
+  const toggle = (id: string) => setExpanded(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+
+  const sorted = [...sales].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-5">
+        <p className="text-sm text-gray-500">
+          {sorted.length} venda{sorted.length !== 1 ? "s" : ""} · {sales.flatMap(s => s.installments).length} parcela{sales.flatMap(s => s.installments).length !== 1 ? "s" : ""}
+        </p>
+        <button onClick={() => setShowModal(true)}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white shadow-sm"
+          style={{background:"#6366f1"}}>
+          <Plus className="w-4 h-4"/> Nova Venda
+        </button>
+      </div>
+
+      <div className="space-y-2">
+        {sorted.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-gray-100 p-16 text-center text-gray-400 text-sm">
+            <DollarSign className="w-8 h-8 mx-auto mb-2 text-gray-200"/>
+            Nenhuma venda registrada
+          </div>
+        ) : sorted.map(sale => {
+          const isExpanded = expanded.has(sale.id);
+          const neg = NEG_TYPE_MAP[sale.negotiationType || "custom"] || NEG_TYPE_MAP.custom;
+          const pagas = sale.installments.filter(i => i.status === "pago").length;
+          const hasOverdue = sale.installments.some(i => i.status !== "pago" && new Date(i.dueDate) < todayStart);
+          const displayValue = sale.netValue ?? sale.totalAmount;
+          const total = sale.installments.length;
+
+          return (
+            <div key={sale.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+              <button onClick={() => toggle(sale.id)}
+                className="w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-gray-50/50 transition-colors">
+                <ChevronRight className={`w-4 h-4 text-gray-400 transition-transform shrink-0 ${isExpanded ? "rotate-90" : ""}`}/>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-semibold text-gray-800">{sale.client.name}</span>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${neg.cls}`}>{neg.label}</span>
+                    {hasOverdue && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-600">VENCIDA</span>}
+                  </div>
+                  <p className="text-xs text-gray-400 mt-0.5 truncate">
+                    {sale.description} · {pagas}/{total} paga{pagas !== 1 ? "s" : ""}
+                    {sale.paymentMethod && ` · ${sale.paymentMethod}`}
+                  </p>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className="text-sm font-bold text-gray-800">{fmt(displayValue)}</p>
+                  <p className="text-[10px] text-gray-400">{fmtDate(sale.createdAt)}</p>
+                </div>
+              </button>
+
+              {isExpanded && (
+                <div className="border-t border-gray-100 bg-gray-50/40 px-4 py-3">
+                  <div className="space-y-1.5">
+                    {sale.installments.sort((a, b) => a.number - b.number).map(inst => {
+                      const paid    = inst.status === "pago";
+                      const over    = !paid && new Date(inst.dueDate) < todayStart;
+                      const days    = over ? Math.floor((now.getTime() - new Date(inst.dueDate).getTime()) / (1000*60*60*24)) : 0;
+                      const instPmt = inst.paymentMethod || sale.paymentMethod;
+                      return (
+                        <div key={inst.id} className={`flex items-center gap-2.5 rounded-xl px-3 py-2.5 border ${
+                          paid ? "bg-green-50 border-green-200"
+                          : over ? "bg-red-50 border-red-200"
+                          : "bg-white border-gray-100"
+                        }`}>
+                          <button
+                            onClick={() => onToggleParcela(sale.id, inst.id, paid ? "pendente" : "pago")}
+                            title={paid ? "Desmarcar" : "Marcar como pago"}
+                            className={`shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
+                              paid ? "bg-green-500 border-green-500 text-white"
+                              : over ? "border-red-400 hover:bg-red-50"
+                              : "border-gray-300 hover:border-indigo-400"
+                            }`}>
+                            {paid && <Check className="w-2.5 h-2.5"/>}
+                          </button>
+                          <div className="flex-1 min-w-0 text-xs">
+                            <span className={`font-semibold ${paid ? "text-green-700" : over ? "text-red-700" : "text-gray-700"}`}>
+                              {inst.label || `${inst.number}ª parcela`}
+                            </span>
+                            {instPmt && <span className="ml-1.5 text-gray-400">{instPmt}</span>}
+                          </div>
+                          <div className="shrink-0 text-right text-xs">
+                            <p className={`font-bold ${paid ? "text-green-700" : over ? "text-red-600" : "text-gray-700"}`}>{fmt(inst.amount)}</p>
+                            <p className={over ? "text-red-400" : "text-gray-400"}>
+                              {paid ? fmtDate(inst.paidAt) : fmtDate(inst.dueDate)}
+                              {over && ` (${days}d)`}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="flex items-center justify-between pt-2.5 mt-2.5 border-t border-gray-100">
+                    <div className="text-xs text-gray-400 flex items-center gap-3 flex-wrap">
+                      {sale.netValue && sale.netValue !== sale.totalAmount && (
+                        <span>Líquido: <span className="font-semibold text-gray-600">{fmt(sale.netValue)}</span> · Bruto: {fmt(sale.totalAmount)}</span>
+                      )}
+                      {sale.negotiationNotes && <span className="italic truncate max-w-[200px]">{sale.negotiationNotes}</span>}
+                    </div>
+                    <button
+                      onClick={async () => {
+                        if (!confirm(`Remover "${sale.description}" e todas as parcelas?`)) return;
+                        await fetch(`/api/financeiro/vendas/${sale.id}`, { method: "DELETE" });
+                        onDeleteSale(sale.id);
+                      }}
+                      className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-red-500 transition-colors shrink-0">
+                      <Trash2 className="w-3 h-3"/> Excluir venda
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {showModal && (
+        <NovaVendaModal clients={clients} onClose={() => setShowModal(false)}
+          onSave={sale => { onAddSale(sale); setShowModal(false); }}/>
+      )}
+    </div>
+  );
+}
+
 // ─── Tab: Fluxo de Caixa ──────────────────────────────────────────
 // (inline add row for quick entry)
 // ─── FluxoPanel (top-level, extracted from FluxoCaixa for Turbopack) ──
@@ -1150,8 +1303,9 @@ type FinAlerts = {
 // ─── Main page ────────────────────────────────────────────────────
 export default function FinanceiroPage() {
   const today = new Date();
-  const [tab, setTab]             = useState<TabKey>("fluxo");
+  const [tab, setTab]             = useState<TabKey>("resumo");
   const [monthDate, setMonthDate] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
+  const [showNovaReceita, setShowNovaReceita] = useState(false);
   const [txs, setTxs]             = useState<Tx[]>([]);
   const [sales, setSales]         = useState<Sale[]>([]);
   const [clients, setClients]     = useState<Client[]>([]);
@@ -1331,11 +1485,11 @@ export default function FinanceiroPage() {
   const saldo = parseFloat(saldoInicial.replace(",",".")) || 0;
 
   const TABS: {key:TabKey; label:string; icon:React.ReactNode}[] = [
-    {key:"fluxo",      label:"Fluxo de Caixa",      icon:<LayoutGrid className="w-4 h-4"/>},
-    {key:"pagar",      label:"Contas a Pagar",       icon:<CreditCard className="w-4 h-4"/>},
-    {key:"faturamento",label:"Faturamento",           icon:<Receipt className="w-4 h-4"/>},
-    {key:"parcelas",   label:"Contas a Receber",      icon:<ListChecks className="w-4 h-4"/>},
-    {key:"alertas",    label:"Cobranças",             icon:<AlertCircle className="w-4 h-4"/>},
+    {key:"resumo",    label:"Resumo",         icon:<LayoutGrid className="w-4 h-4"/>},
+    {key:"recebiveis",label:"Recebíveis",     icon:<ListChecks className="w-4 h-4"/>},
+    {key:"cobranças", label:"Cobranças",      icon:<AlertCircle className="w-4 h-4"/>},
+    {key:"vendas",    label:"Vendas",         icon:<Receipt className="w-4 h-4"/>},
+    {key:"pagar",     label:"Contas a Pagar", icon:<CreditCard className="w-4 h-4"/>},
   ];
 
   const pendentesCount = txs.filter(t=>t.type==="despesa"&&t.status!=="pago").length;
@@ -1380,20 +1534,10 @@ export default function FinanceiroPage() {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Financeiro</h1>
-            <p className="text-gray-400 text-sm mt-0.5">Controle financeiro completo</p>
+            <p className="text-gray-400 text-sm mt-0.5">Gestão de vendas, recebíveis e caixa</p>
           </div>
           <div className="flex items-center gap-3">
-            {/* Month nav (only for fluxo) */}
-            {tab === "fluxo" && (
-              <div className="flex items-center gap-1 bg-gray-50 rounded-xl px-2 py-1 border border-gray-200">
-                <button onClick={() => setMonthDate(d => new Date(d.getFullYear(), d.getMonth()-1, 1))}
-                  className="p-1 rounded hover:bg-gray-200 text-gray-400"><ChevronLeft className="w-4 h-4"/></button>
-                <span className="text-sm font-bold text-gray-800 w-36 text-center">{MONTHS[monthDate.getMonth()]} {monthDate.getFullYear()}</span>
-                <button onClick={() => setMonthDate(d => new Date(d.getFullYear(), d.getMonth()+1, 1))}
-                  className="p-1 rounded hover:bg-gray-200 text-gray-400"><ChevronRight className="w-4 h-4"/></button>
-              </div>
-            )}
-            <button onClick={() => loadData()} disabled={loading}
+<button onClick={() => loadData()} disabled={loading}
               className="p-2 rounded-xl border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-40"
               title="Atualizar dados">
               <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`}/>
@@ -1406,111 +1550,8 @@ export default function FinanceiroPage() {
           </div>
         </div>
 
-        {/* ── KPI Cards ─────────────────────────────── */}
-        <div className="space-y-2.5 mb-4">
-          {/* Linha 1: visão do mês atual */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div className="bg-indigo-50 rounded-2xl px-4 py-3 border border-indigo-100">
-              <p className="text-[10px] text-indigo-500 uppercase font-bold tracking-wide mb-0.5">Faturamento do mês</p>
-              <p className="text-lg font-bold text-indigo-700">{fmt(kpiFaturamento)}</p>
-              <p className="text-[10px] text-indigo-400">total emitido este mês</p>
-            </div>
-            <div className="bg-green-50 rounded-2xl px-4 py-3 border border-green-100">
-              <p className="text-[10px] text-green-500 uppercase font-bold tracking-wide mb-0.5">Caixa recebido</p>
-              <p className="text-lg font-bold text-green-700">{fmt(kpiCaixaRecebido)}</p>
-              <p className="text-[10px] text-green-400">recebido este mês</p>
-            </div>
-            <div className="bg-amber-50 rounded-2xl px-4 py-3 border border-amber-100">
-              <p className="text-[10px] text-amber-500 uppercase font-bold tracking-wide mb-0.5">Contas a receber</p>
-              <p className="text-lg font-bold text-amber-700">{fmt(kpiContasReceber)}</p>
-              <p className="text-[10px] text-amber-400">pendente no geral</p>
-            </div>
-            <div className="bg-red-50 rounded-2xl px-4 py-3 border border-red-100">
-              <p className="text-[10px] text-red-400 uppercase font-bold tracking-wide mb-0.5">Contas a pagar</p>
-              <p className="text-lg font-bold text-red-600">{fmt(kpiContasPagar)}</p>
-              <p className="text-[10px] text-red-300">despesas em aberto</p>
-            </div>
-          </div>
-          {/* Linha 2: urgência e projeção */}
-          <div className="grid grid-cols-3 gap-3">
-            <div className={`rounded-2xl px-4 py-3 border ${kpiVendidasCount>0?"bg-rose-50 border-rose-200":"bg-gray-50 border-gray-100"}`}>
-              <p className={`text-[10px] uppercase font-bold tracking-wide mb-0.5 ${kpiVendidasCount>0?"text-rose-500":"text-gray-400"}`}>Parcelas vencidas</p>
-              <p className={`text-lg font-bold ${kpiVendidasCount>0?"text-rose-700":"text-gray-500"}`}>{fmt(kpiVendidasTotal)}</p>
-              <p className={`text-[10px] ${kpiVendidasCount>0?"text-rose-400":"text-gray-400"}`}>{kpiVendidasCount} parcela{kpiVendidasCount!==1?"s":""} atrasada{kpiVendidasCount!==1?"s":""}</p>
-            </div>
-            <div className="bg-blue-50 rounded-2xl px-4 py-3 border border-blue-100">
-              <p className="text-[10px] text-blue-500 uppercase font-bold tracking-wide mb-0.5">Receita prevista 7 dias</p>
-              <p className="text-lg font-bold text-blue-700">{fmt(kpiProx7Total)}</p>
-              <p className="text-[10px] text-blue-400">vence nos próximos 7 dias</p>
-            </div>
-            <div className="bg-sky-50 rounded-2xl px-4 py-3 border border-sky-100">
-              <p className="text-[10px] text-sky-500 uppercase font-bold tracking-wide mb-0.5">Receita prevista 30 dias</p>
-              <p className="text-lg font-bold text-sky-700">{fmt(kpiProx30Total)}</p>
-              <p className="text-[10px] text-sky-400">vence nos próximos 30 dias</p>
-            </div>
-          </div>
-        </div>
 
-        {/* ── Vencimentos da semana (destaque) ─── */}
-        {weekInstallments.length > 0 && (
-          <div className="mb-3 bg-blue-50 border border-blue-200 rounded-xl overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-2.5">
-              <div className="flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-blue-600 shrink-0"/>
-                <span className="text-xs font-bold text-blue-700">Vencimentos esta semana</span>
-                <span className="text-xs bg-blue-200 text-blue-800 rounded-full px-2 py-0.5 font-bold">{weekInstallments.length}</span>
-              </div>
-              <button onClick={() => setTab("parcelas")} className="text-xs text-blue-600 hover:underline font-medium flex items-center gap-1">
-                Ver parcelas <ChevronRight className="w-3 h-3"/>
-              </button>
-            </div>
-            <div className="px-4 pb-3 flex gap-2 overflow-x-auto">
-              {weekInstallments.slice(0, 5).map(i => (
-                <Link key={i.id} href={`/alunos?open=${i.clientId}`}
-                  className="shrink-0 bg-white rounded-lg border border-blue-100 px-3 py-2 min-w-[120px] hover:border-blue-300 transition-colors">
-                  <p className="text-xs font-semibold text-gray-800 truncate">{i.clientName}</p>
-                  <p className="text-xs text-blue-600 font-bold">{fmt(i.amount)}</p>
-                  <p className="text-[10px] text-gray-400">{fmtDate(i.dueDate)}</p>
-                </Link>
-              ))}
-              {weekInstallments.length > 5 && (
-                <button onClick={() => setTab("parcelas")} className="shrink-0 bg-white rounded-lg border border-blue-100 px-3 py-2 min-w-[80px] hover:border-blue-300 transition-colors flex items-center justify-center text-xs text-blue-500 font-medium">
-                  +{weekInstallments.length - 5} mais
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ── Mini-resumo de cobranças (clica para ir à aba Cobranças) ─── */}
-        {alerts && (alerts.counts.overdue + alerts.counts.today + alerts.counts.endingSoon) > 0 && (
-          <div className="flex items-center gap-3 mb-4 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl flex-wrap">
-            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0"/>
-            <div className="flex items-center gap-1.5 flex-wrap flex-1">
-              {alerts.counts.overdue > 0 && (
-                <span className="text-xs bg-red-100 text-red-700 rounded-full px-2 py-0.5 font-medium">
-                  {alerts.counts.overdue} vencida{alerts.counts.overdue > 1 ? "s" : ""}
-                </span>
-              )}
-              {alerts.counts.today > 0 && (
-                <span className="text-xs bg-amber-200 text-amber-800 rounded-full px-2 py-0.5 font-medium">
-                  {alerts.counts.today} vence hoje
-                </span>
-              )}
-              {alerts.counts.endingSoon > 0 && (
-                <span className="text-xs bg-purple-100 text-purple-700 rounded-full px-2 py-0.5 font-medium">
-                  {alerts.counts.endingSoon} renovação
-                </span>
-              )}
-            </div>
-            <button onClick={() => setTab("alertas")}
-              className="text-xs text-amber-700 font-semibold hover:underline shrink-0 flex items-center gap-1">
-              Ver cobranças <ChevronRight className="w-3 h-3"/>
-            </button>
-          </div>
-        )}
-
-        {/* Tab nav */}
+{/* Tab nav */}
         <div className="flex gap-0 -mb-px">
           {TABS.map(t => (
             <button key={t.key} onClick={() => setTab(t.key)}
@@ -1523,12 +1564,12 @@ export default function FinanceiroPage() {
                   {pendentesCount}
                 </span>
               )}
-              {t.key==="parcelas" && parcelasOk>0 && (
+              {t.key==="recebiveis" && parcelasOk>0 && (
                 <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold text-white bg-indigo-500">
                   {parcelasOk}
                 </span>
               )}
-              {t.key==="alertas" && alerts && (alerts.counts.overdue + alerts.counts.today) > 0 && (
+              {t.key==="cobranças" && alerts && (alerts.counts.overdue + alerts.counts.today) > 0 && (
                 <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold text-white bg-red-500">
                   {alerts.counts.overdue + alerts.counts.today}
                 </span>
@@ -1546,22 +1587,136 @@ export default function FinanceiroPage() {
           </div>
         ) : (
           <>
-            {tab === "fluxo" && (
-              <FluxoCaixa txs={allTxs} monthDate={monthDate} clients={clients}
-                onAdd={addTx} onToggle={toggleTx} onDelete={deleteTx}/>
+            {tab === "resumo" && (
+              <div className="space-y-5">
+                {/* KPI Cards */}
+                <div className="space-y-2.5">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="bg-indigo-50 rounded-2xl px-4 py-3 border border-indigo-100">
+                      <p className="text-[10px] text-indigo-500 uppercase font-bold tracking-wide mb-0.5">Faturamento do mês</p>
+                      <p className="text-xl font-bold text-indigo-700">{fmt(kpiFaturamento)}</p>
+                      <p className="text-[10px] text-indigo-400">total emitido este mês</p>
+                    </div>
+                    <div className="bg-green-50 rounded-2xl px-4 py-3 border border-green-100">
+                      <p className="text-[10px] text-green-500 uppercase font-bold tracking-wide mb-0.5">Caixa recebido</p>
+                      <p className="text-xl font-bold text-green-700">{fmt(kpiCaixaRecebido)}</p>
+                      <p className="text-[10px] text-green-400">recebido este mês</p>
+                    </div>
+                    <div className="bg-amber-50 rounded-2xl px-4 py-3 border border-amber-100">
+                      <p className="text-[10px] text-amber-500 uppercase font-bold tracking-wide mb-0.5">Recebíveis em aberto</p>
+                      <p className="text-xl font-bold text-amber-700">{fmt(kpiContasReceber)}</p>
+                      <p className="text-[10px] text-amber-400">pendente no geral</p>
+                    </div>
+                    <div className="bg-red-50 rounded-2xl px-4 py-3 border border-red-100">
+                      <p className="text-[10px] text-red-400 uppercase font-bold tracking-wide mb-0.5">Contas a pagar</p>
+                      <p className="text-xl font-bold text-red-600">{fmt(kpiContasPagar)}</p>
+                      <p className="text-[10px] text-red-300">despesas em aberto</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className={`rounded-2xl px-4 py-3 border ${kpiVendidasCount>0?"bg-rose-50 border-rose-200":"bg-gray-50 border-gray-100"}`}>
+                      <p className={`text-[10px] uppercase font-bold tracking-wide mb-0.5 ${kpiVendidasCount>0?"text-rose-500":"text-gray-400"}`}>Vencido real</p>
+                      <p className={`text-xl font-bold ${kpiVendidasCount>0?"text-rose-700":"text-gray-500"}`}>{fmt(kpiVendidasTotal)}</p>
+                      <p className={`text-[10px] ${kpiVendidasCount>0?"text-rose-400":"text-gray-400"}`}>{kpiVendidasCount} parcela{kpiVendidasCount!==1?"s":""} atrasada{kpiVendidasCount!==1?"s":""}</p>
+                    </div>
+                    <div className="bg-blue-50 rounded-2xl px-4 py-3 border border-blue-100">
+                      <p className="text-[10px] text-blue-500 uppercase font-bold tracking-wide mb-0.5">Previsão 7 dias</p>
+                      <p className="text-xl font-bold text-blue-700">{fmt(kpiProx7Total)}</p>
+                      <p className="text-[10px] text-blue-400">vence nos próximos 7 dias</p>
+                    </div>
+                    <div className="bg-sky-50 rounded-2xl px-4 py-3 border border-sky-100">
+                      <p className="text-[10px] text-sky-500 uppercase font-bold tracking-wide mb-0.5">Previsão 30 dias</p>
+                      <p className="text-xl font-bold text-sky-700">{fmt(kpiProx30Total)}</p>
+                      <p className="text-[10px] text-sky-400">vence nos próximos 30 dias</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Vencimentos da semana */}
+                {weekInstallments.length > 0 && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-xl overflow-hidden">
+                    <div className="flex items-center justify-between px-4 py-2.5">
+                      <div className="flex items-center gap-2">
+                        <Calendar className="w-4 h-4 text-blue-600 shrink-0"/>
+                        <span className="text-xs font-bold text-blue-700">Vencimentos esta semana</span>
+                        <span className="text-xs bg-blue-200 text-blue-800 rounded-full px-2 py-0.5 font-bold">{weekInstallments.length}</span>
+                      </div>
+                      <button onClick={() => setTab("recebiveis")} className="text-xs text-blue-600 hover:underline font-medium flex items-center gap-1">
+                        Ver recebíveis <ChevronRight className="w-3 h-3"/>
+                      </button>
+                    </div>
+                    <div className="px-4 pb-3 flex gap-2 overflow-x-auto">
+                      {weekInstallments.slice(0, 5).map(i => (
+                        <Link key={i.id} href={`/alunos?open=${i.clientId}`}
+                          className="shrink-0 bg-white rounded-lg border border-blue-100 px-3 py-2 min-w-[120px] hover:border-blue-300 transition-colors">
+                          <p className="text-xs font-semibold text-gray-800 truncate">{i.clientName}</p>
+                          <p className="text-xs text-blue-600 font-bold">{fmt(i.amount)}</p>
+                          <p className="text-[10px] text-gray-400">{fmtDate(i.dueDate)}</p>
+                        </Link>
+                      ))}
+                      {weekInstallments.length > 5 && (
+                        <button onClick={() => setTab("recebiveis")} className="shrink-0 bg-white rounded-lg border border-blue-100 px-3 py-2 min-w-[80px] hover:border-blue-300 transition-colors flex items-center justify-center text-xs text-blue-500 font-medium">
+                          +{weekInstallments.length - 5} mais
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Alerta de cobranças */}
+                {alerts && (alerts.counts.overdue + alerts.counts.today) > 0 && (
+                  <div className="flex items-center gap-3 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl flex-wrap">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0"/>
+                    <div className="flex items-center gap-1.5 flex-wrap flex-1">
+                      {alerts.counts.overdue > 0 && (
+                        <span className="text-xs bg-red-100 text-red-700 rounded-full px-2 py-0.5 font-medium">
+                          {alerts.counts.overdue} vencida{alerts.counts.overdue > 1 ? "s" : ""}
+                        </span>
+                      )}
+                      {alerts.counts.today > 0 && (
+                        <span className="text-xs bg-amber-200 text-amber-800 rounded-full px-2 py-0.5 font-medium">
+                          {alerts.counts.today} vence hoje
+                        </span>
+                      )}
+                      {alerts.counts.endingSoon > 0 && (
+                        <span className="text-xs bg-purple-100 text-purple-700 rounded-full px-2 py-0.5 font-medium">
+                          {alerts.counts.endingSoon} renovação
+                        </span>
+                      )}
+                    </div>
+                    <button onClick={() => setTab("cobranças")}
+                      className="text-xs text-amber-700 font-semibold hover:underline shrink-0 flex items-center gap-1">
+                      Ver cobranças <ChevronRight className="w-3 h-3"/>
+                    </button>
+                  </div>
+                )}
+
+                {/* Receita manual */}
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-gray-400">Lançamentos avulsos (não vinculados a vendas)</p>
+                  <button onClick={() => setShowNovaReceita(true)}
+                    className="flex items-center gap-1.5 text-xs font-medium text-indigo-600 hover:underline">
+                    <Plus className="w-3 h-3"/> Receita manual
+                  </button>
+                </div>
+                {showNovaReceita && (
+                  <NovaReceitaModal clients={clients} onClose={() => setShowNovaReceita(false)}
+                    onSave={tx => { addTx(tx); setShowNovaReceita(false); }}/>
+                )}
+              </div>
+            )}
+            {tab === "recebiveis" && (
+              <ParcelasReceber sales={sales} clients={clients}
+                onToggleParcela={toggleParcela} onAddSale={addSale} onDeleteSale={deleteSale}/>
+            )}
+            {tab === "vendas" && (
+              <VendasTab sales={sales} clients={clients}
+                onToggleParcela={toggleParcela} onAddSale={addSale} onDeleteSale={deleteSale}/>
             )}
             {tab === "pagar" && (
               <ContasPagar txs={txs} onToggle={toggleTx} onDelete={deleteTx} onAdd={addTx}/>
             )}
-            {tab === "faturamento" && (
-              <Faturamento txs={allTxs} sales={sales} clients={clients} monthDate={monthDate}
-                onToggle={toggleTx} onDelete={deleteTx} onAddTx={addTx} onAddSale={addSale}/>
-            )}
-            {tab === "parcelas" && (
-              <ParcelasReceber sales={sales} clients={clients}
-                onToggleParcela={toggleParcela} onAddSale={addSale} onDeleteSale={deleteSale}/>
-            )}
-            {tab === "alertas" && (() => {
+            {tab === "cobranças" && (() => {
               // Agrupa vencidas + hoje por cliente para visão operacional
               type CobrancaCliente = {
                 id: string; name: string;

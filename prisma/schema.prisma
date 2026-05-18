@@ -272,16 +272,17 @@ model Sale {
 }
 
 model Installment {
-  id       String    @id @default(cuid())
-  number   Int
-  amount   Float
-  netValue Float?    // valor líquido após taxas (cartão)
-  dueDate  DateTime
-  paidAt   DateTime?
-  status   String    @default("pendente")
-  label    String?   // rótulo livre: "Entrada", "1ª parcela", etc.
-  notes    String?
-  saleId   String
+  id            String    @id @default(cuid())
+  number        Int
+  amount        Float
+  netValue      Float?    // valor líquido após taxas (cartão)
+  dueDate       DateTime
+  paidAt        DateTime?
+  status        String    @default("pendente")
+  label         String?   // rótulo livre: "Entrada", "1ª parcela", etc.
+  notes         String?
+  paymentMethod String?   // forma de pagamento desta etapa (Pix, Cartão, etc.)
+  saleId        String
 
   sale        Sale         @relation(fields: [saleId], references: [id], onDelete: Cascade)
   financialTx FinancialTx?

@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
     if (Array.isArray(customInstallments) && customInstallments.length > 0) {
       installmentData = customInstallments.map((inst: {
         amount: string | number; dueDate: string;
-        netValue?: string | number; label?: string; paid?: boolean;
+        netValue?: string | number; label?: string; paid?: boolean; paymentMethod?: string;
       }, i: number) => {
         const instPaid = isPaid || inst.paid === true;
         const entry: InstData = {
@@ -66,6 +66,7 @@ export async function POST(req: NextRequest) {
           label:   inst.label || undefined,
         };
         if (inst.netValue) entry.netValue = parseFloat(String(inst.netValue));
+        if (inst.paymentMethod) (entry as Record<string, unknown>).paymentMethod = inst.paymentMethod;
         if (instPaid) entry.paidAt = new Date();
         return entry;
       });

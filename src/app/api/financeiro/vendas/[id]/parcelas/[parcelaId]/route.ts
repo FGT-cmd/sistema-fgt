@@ -31,6 +31,9 @@ export async function PATCH(
   if (body.notes !== undefined) {
     instData.notes = body.notes ?? undefined;
   }
+  if (body.paymentMethod !== undefined) {
+    instData.paymentMethod = body.paymentMethod ?? null;
+  }
 
   const installment = await prisma.installment.update({
     where: { id: parcelaId },

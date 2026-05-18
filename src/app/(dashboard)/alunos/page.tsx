@@ -18,7 +18,7 @@ type ServicePlan = {
 };
 type InstallmentDraft = { amount: string; dueDate: string; label: string; netValue?: string; paid?: boolean };
 type NegotiationType = "cash" | "pix" | "card" | "custom";
-type Installment = { id: string; status: string; dueDate: string; paidAt?: string | null; amount: number; number: number; label?: string | null; netValue?: number | null };
+type Installment = { id: string; status: string; dueDate: string; paidAt?: string | null; amount: number; number: number; label?: string | null; netValue?: number | null; paymentMethod?: string | null };
 type Sale = {
   id: string; description: string; totalAmount: number; installmentsCount: number;
   paymentMethod?: string | null; negotiationType?: string | null;
@@ -1355,15 +1355,31 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
               ? <p className="text-xs text-gray-400 text-center py-3">Nenhum lançamento registrado</p>
               : sales.map(sale => {
                 const pagas = sale.installments.filter(i => i.status === "pago").length;
+                const negLabel = NEG_TYPES.find(t => t.value === sale.negotiationType)?.label;
+                const displayValue = sale.netValue ?? sale.totalAmount;
+                const hasOverdue = sale.installments.some(i => i.status !== "pago" && new Date(i.dueDate) < new Date());
                 return (
-                  <div key={sale.id} className="mb-3 bg-gray-50 rounded-xl p-3">
+                  <div key={sale.id} className={`mb-3 rounded-xl p-3 border ${hasOverdue ? "bg-red-50/40 border-red-200" : "bg-gray-50 border-gray-100"}`}>
                     <div className="flex justify-between items-start mb-2">
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-gray-800">{sale.description}</p>
-                        <p className="text-xs text-gray-400">{sale.paymentMethod} · {pagas}/{sale.installmentsCount} pagas</p>
+                        <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
+                          <p className="text-sm font-semibold text-gray-800">{sale.description}</p>
+                          {negLabel && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700">{negLabel}</span>
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-400">
+                          {pagas}/{sale.installmentsCount} paga{pagas !== 1 ? "s" : ""}
+                          {sale.paymentMethod && ` · ${sale.paymentMethod}`}
+                        </p>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        <p className="text-sm font-bold text-gray-600">{fmt(sale.totalAmount)}</p>
+                        <div className="text-right">
+                          <p className="text-sm font-bold text-gray-700">{fmt(displayValue)}</p>
+                          {sale.netValue && sale.netValue !== sale.totalAmount && (
+                            <p className="text-[10px] text-gray-400">bruto {fmt(sale.totalAmount)}</p>
+                          )}
+                        </div>
                         <button
                           onClick={async () => {
                             if (!confirm(`Remover "${sale.description}" e todas as parcelas?`)) return;
@@ -1379,11 +1395,12 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
                       {sale.installments.sort((a, b) => a.number - b.number).map(inst => {
                         const isPago = inst.status === "pago";
                         const isVencida = !isPago && new Date(inst.dueDate) < new Date();
+                        const instPmt = inst.paymentMethod || (sale.installmentsCount > 1 ? null : sale.paymentMethod);
                         return (
                           <div key={inst.id} className={`flex items-center gap-2 rounded-lg px-2 py-1.5 border text-xs ${
                             isPago ? "bg-green-50 border-green-200"
                             : isVencida ? "bg-red-50 border-red-200"
-                            : "bg-gray-50 border-gray-200"
+                            : "bg-white border-gray-200"
                           }`}>
                             <button
                               onClick={() => toggleInstallment(sale.id, inst.id, inst.status)}
@@ -1395,9 +1412,12 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
                               title={isPago ? "Desmarcar" : "Marcar como paga"}>
                               {isPago && <span className="text-[8px] font-bold">✓</span>}
                             </button>
-                            <span className={`font-semibold shrink-0 ${isPago ? "text-green-700" : isVencida ? "text-red-600" : "text-gray-700"}`}>
-                              {inst.label || `${inst.number}ª`} — {fmt(inst.amount)}
-                            </span>
+                            <div className="flex-1 min-w-0 flex items-center gap-1.5">
+                              <span className={`font-semibold shrink-0 ${isPago ? "text-green-700" : isVencida ? "text-red-600" : "text-gray-700"}`}>
+                                {inst.label || `${inst.number}ª`} — {fmt(inst.amount)}
+                              </span>
+                              {instPmt && <span className="text-gray-400 text-[10px]">{instPmt}</span>}
+                            </div>
                             <input
                               type="date"
                               defaultValue={inst.dueDate.slice(0, 10)}
@@ -1406,7 +1426,7 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
                                   patchInstallment(sale.id, inst.id, { dueDate: e.target.value });
                                 }
                               }}
-                              className="ml-auto text-[10px] border-0 bg-transparent text-gray-400 focus:outline-none focus:text-gray-700 cursor-pointer w-24 text-right"
+                              className="text-[10px] border-0 bg-transparent text-gray-400 focus:outline-none focus:text-gray-700 cursor-pointer w-24 text-right shrink-0"
                             />
                           </div>
                         );

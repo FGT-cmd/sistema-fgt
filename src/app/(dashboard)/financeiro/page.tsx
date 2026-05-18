@@ -710,9 +710,8 @@ function Faturamento({ txs, sales, clients, onToggle, onDelete, onAddTx, onAddSa
   );
 }
 
-// ─── Tab: Parcelas a Receber ──────────────────────────────────────
-// ─── Tipo de filtro de parcelas ───────────────────────────────────
-type ParcelaFilter = "todas" | "a_vencer" | "hoje" | "vencidas" | "pagas";
+// ─── Tab: Contas a Receber ────────────────────────────────────────
+type ParcelaFilter = "vencidas" | "hoje" | "proximos7" | "recebidas_hoje" | "recebidas_mes" | "todas";
 
 function ParcelasReceber({ sales, clients, onToggleParcela, onAddSale, onDeleteSale }: {
   sales: Sale[];
@@ -722,79 +721,80 @@ function ParcelasReceber({ sales, clients, onToggleParcela, onAddSale, onDeleteS
   onDeleteSale: (saleId: string) => void;
 }) {
   const [showModal, setShowModal] = useState(false);
-  const [filter, setFilter] = useState<ParcelaFilter>("todas");
+  const [filter, setFilter] = useState<ParcelaFilter>("vencidas");
 
   const now = new Date();
   const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
   const todayEnd   = new Date(now); todayEnd.setHours(23, 59, 59, 999);
+  const next7d     = new Date(todayEnd.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
-  // Lista plana de todas as parcelas com referência à venda/cliente
   type FlatInst = Installment & { sale: Sale };
-  const allFlat: FlatInst[] = sales.flatMap(s =>
-    s.installments.map(i => ({ ...i, sale: s }))
-  ).sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
+  const allFlat: FlatInst[] = sales.flatMap(s => s.installments.map(i => ({ ...i, sale: s })));
 
-  // Totais para KPIs
-  const totalAReceber  = allFlat.filter(i => i.status !== "pago").reduce((s, i) => s + i.amount, 0);
-  const totalVencidas  = allFlat.filter(i => i.status !== "pago" && new Date(i.dueDate) < todayStart).reduce((s, i) => s + i.amount, 0);
-  const countVencidas  = allFlat.filter(i => i.status !== "pago" && new Date(i.dueDate) < todayStart).length;
-  const totalRecebido  = allFlat.filter(i => i.status === "pago").reduce((s, i) => s + i.amount, 0);
-  const countHoje      = allFlat.filter(i => i.status !== "pago" && new Date(i.dueDate) >= todayStart && new Date(i.dueDate) <= todayEnd).length;
+  const vencidas       = allFlat.filter(i => i.status !== "pago" && new Date(i.dueDate) < todayStart).sort((a,b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
+  const hoje           = allFlat.filter(i => i.status !== "pago" && new Date(i.dueDate) >= todayStart && new Date(i.dueDate) <= todayEnd).sort((a,b) => b.amount - a.amount);
+  const proximos7      = allFlat.filter(i => i.status !== "pago" && new Date(i.dueDate) > todayEnd && new Date(i.dueDate) <= next7d).sort((a,b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
+  const recebidasHoje  = allFlat.filter(i => i.status === "pago" && i.paidAt && new Date(i.paidAt) >= todayStart).sort((a,b) => new Date(b.paidAt!).getTime() - new Date(a.paidAt!).getTime());
+  const recebidasMes   = allFlat.filter(i => i.status === "pago" && i.paidAt && new Date(i.paidAt) >= monthStart).sort((a,b) => new Date(b.paidAt!).getTime() - new Date(a.paidAt!).getTime());
+  const todas          = allFlat.sort((a,b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
 
-  // Filtro aplicado
-  const filteredFlat = allFlat.filter(i => {
-    const d = new Date(i.dueDate);
-    if (filter === "pagas")    return i.status === "pago";
-    if (filter === "vencidas") return i.status !== "pago" && d < todayStart;
-    if (filter === "hoje")     return i.status !== "pago" && d >= todayStart && d <= todayEnd;
-    if (filter === "a_vencer") return i.status !== "pago" && d > todayEnd;
-    return true; // todas
-  });
+  const listMap: Record<ParcelaFilter, FlatInst[]> = { vencidas, hoje, proximos7, recebidas_hoje: recebidasHoje, recebidas_mes: recebidasMes, todas };
+  const current = listMap[filter];
 
-  const FILTERS: { key: ParcelaFilter; label: string; count?: number }[] = [
-    { key: "todas",    label: "Todas" },
-    { key: "vencidas", label: "Vencidas", count: countVencidas },
-    { key: "hoje",     label: "Hoje",     count: countHoje },
-    { key: "a_vencer", label: "A Vencer" },
-    { key: "pagas",    label: "Pagas" },
+  const SECTIONS: { key: ParcelaFilter; label: string; count: number; total: number; color: string }[] = [
+    { key: "vencidas",       label: "Vencidas",          count: vencidas.length,      total: vencidas.reduce((s,i)=>s+i.amount,0),      color: "red" },
+    { key: "hoje",           label: "Vencendo hoje",      count: hoje.length,          total: hoje.reduce((s,i)=>s+i.amount,0),          color: "amber" },
+    { key: "proximos7",      label: "Próximos 7 dias",    count: proximos7.length,     total: proximos7.reduce((s,i)=>s+i.amount,0),     color: "blue" },
+    { key: "recebidas_hoje", label: "Recebidas hoje",     count: recebidasHoje.length, total: recebidasHoje.reduce((s,i)=>s+i.amount,0), color: "green" },
+    { key: "recebidas_mes",  label: "Recebidas no mês",   count: recebidasMes.length,  total: recebidasMes.reduce((s,i)=>s+i.amount,0),  color: "emerald" },
   ];
+
+  const colorMap: Record<string, { ring: string; border: string; text: string; sub: string; bg: string }> = {
+    red:     { ring: "ring-red-300",     border: "border-red-100",     text: "text-red-600",     sub: "text-red-400",     bg: "bg-red-50" },
+    amber:   { ring: "ring-amber-300",   border: "border-amber-100",   text: "text-amber-600",   sub: "text-amber-400",   bg: "bg-amber-50" },
+    blue:    { ring: "ring-blue-300",    border: "border-blue-100",    text: "text-blue-600",    sub: "text-blue-400",    bg: "bg-blue-50" },
+    green:   { ring: "ring-green-300",   border: "border-green-100",   text: "text-green-600",   sub: "text-green-400",   bg: "bg-green-50" },
+    emerald: { ring: "ring-emerald-300", border: "border-emerald-100", text: "text-emerald-600", sub: "text-emerald-400", bg: "bg-emerald-50" },
+  };
 
   return (
     <div>
-      {/* KPIs */}
-      <div className="grid grid-cols-3 gap-4 mb-5">
-        <div className="bg-white rounded-xl border border-amber-100 shadow-sm p-4">
-          <p className="text-[10px] text-amber-500 font-bold uppercase mb-1">A Receber</p>
-          <p className="text-xl font-bold text-amber-600">{fmt(totalAReceber)}</p>
-          <p className="text-xs text-gray-400 mt-0.5">{allFlat.filter(i=>i.status!=="pago").length} parcelas</p>
-        </div>
-        <div className="bg-white rounded-xl border border-red-100 shadow-sm p-4">
-          <p className="text-[10px] text-red-500 font-bold uppercase mb-1">Vencidas</p>
-          <p className="text-xl font-bold text-red-600">{fmt(totalVencidas)}</p>
-          <p className="text-xs text-gray-400 mt-0.5">{countVencidas} parcelas</p>
-        </div>
-        <div className="bg-white rounded-xl border border-green-100 shadow-sm p-4">
-          <p className="text-[10px] text-green-500 font-bold uppercase mb-1">Recebido</p>
-          <p className="text-xl font-bold text-green-600">{fmt(totalRecebido)}</p>
-          <p className="text-xs text-gray-400 mt-0.5">{allFlat.filter(i=>i.status==="pago").length} parcelas</p>
-        </div>
+      {/* Cards clicáveis por seção */}
+      <div className="grid grid-cols-5 gap-3 mb-5">
+        {SECTIONS.map(sec => {
+          const c = colorMap[sec.color];
+          const active = filter === sec.key;
+          return (
+            <button key={sec.key} onClick={() => setFilter(sec.key)}
+              className={`rounded-xl border p-3 text-left transition-all bg-white shadow-sm ${active ? `ring-2 ${c.ring} ${c.border}` : `${c.border} hover:${c.ring}`}`}>
+              <p className={`text-[10px] font-bold uppercase mb-1 ${c.sub}`}>{sec.label}</p>
+              <p className={`text-xl font-bold ${c.text}`}>{fmt(sec.total)}</p>
+              <p className="text-xs text-gray-400 mt-0.5">{sec.count} {sec.count === 1 ? "parcela" : "parcelas"}</p>
+            </button>
+          );
+        })}
       </div>
 
       {/* Toolbar */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex gap-1 flex-wrap">
-          {FILTERS.map(f => (
-            <button key={f.key} onClick={() => setFilter(f.key)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1 ${filter===f.key ? "text-white" : "bg-white text-gray-500 border border-gray-200 hover:bg-gray-50"}`}
-              style={filter===f.key ? {background:"#6366f1"} : {}}>
-              {f.label}
-              {f.count !== undefined && f.count > 0 && (
-                <span className={`text-[10px] rounded-full px-1.5 py-0.5 font-bold ${filter===f.key ? "bg-white/20 text-white" : f.key==="vencidas" ? "bg-red-100 text-red-600" : "bg-amber-100 text-amber-600"}`}>
-                  {f.count}
-                </span>
-              )}
-            </button>
-          ))}
+          {[...SECTIONS, { key: "todas" as ParcelaFilter, label: "Todas", count: todas.length, total: 0, color: "gray" }].map(f => {
+            const active = filter === f.key;
+            const bgColors: Record<string, string> = { red:"#ef4444", amber:"#f59e0b", blue:"#3b82f6", green:"#10b981", emerald:"#059669", gray:"#6366f1" };
+            return (
+              <button key={f.key} onClick={() => setFilter(f.key)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1 ${active ? "text-white" : "bg-white text-gray-500 border border-gray-200 hover:bg-gray-50"}`}
+                style={active ? { background: bgColors[f.color] } : {}}>
+                {f.label}
+                {f.count > 0 && (
+                  <span className={`text-[10px] rounded-full px-1.5 py-0.5 font-bold ${active ? "bg-white/20 text-white" : "bg-gray-100 text-gray-500"}`}>
+                    {f.count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
         <button onClick={() => setShowModal(true)}
           className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white shadow-sm"
@@ -803,11 +803,11 @@ function ParcelasReceber({ sales, clients, onToggleParcela, onAddSale, onDeleteS
         </button>
       </div>
 
-      {/* Tabela plana de parcelas */}
-      {filteredFlat.length === 0 ? (
+      {/* Tabela */}
+      {current.length === 0 ? (
         <div className="bg-white rounded-2xl border border-gray-100 p-16 text-center text-gray-400 text-sm">
           <CheckCircle2 className="w-8 h-8 mx-auto mb-2 text-gray-200"/>
-          Nenhuma parcela encontrada para este filtro
+          Nenhuma parcela nesta categoria
         </div>
       ) : (
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
@@ -815,45 +815,53 @@ function ParcelasReceber({ sales, clients, onToggleParcela, onAddSale, onDeleteS
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50">
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase">Aluno</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase hidden md:table-cell">Negociação</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase">Parcela</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase hidden md:table-cell">Descrição</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase">Vencimento</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase hidden lg:table-cell">Pagamento</th>
                 <th className="px-4 py-3 text-center text-xs font-semibold text-gray-400 uppercase">Status</th>
                 <th className="px-4 py-3 text-right text-xs font-semibold text-gray-400 uppercase">Valor</th>
-                <th className="w-10"/>
+                <th className="px-4 py-3 text-center text-xs font-semibold text-gray-400 uppercase">Ações</th>
               </tr>
             </thead>
             <tbody>
-              {filteredFlat.map(inst => {
-                const paid = inst.status === "pago";
-                const over = !paid && new Date(inst.dueDate) < todayStart;
+              {current.map(inst => {
+                const paid    = inst.status === "pago";
+                const over    = !paid && new Date(inst.dueDate) < todayStart;
                 const isToday = !paid && new Date(inst.dueDate) >= todayStart && new Date(inst.dueDate) <= todayEnd;
-                const days = over ? Math.floor((now.getTime() - new Date(inst.dueDate).getTime()) / (1000*60*60*24)) : 0;
+                const days    = over ? Math.floor((now.getTime() - new Date(inst.dueDate).getTime()) / (1000*60*60*24)) : 0;
+                const suffix  = inst.label ? ` — ${inst.label}` : inst.sale.installmentsCount > 1 ? ` (${inst.number}/${inst.sale.installmentsCount})` : "";
                 return (
-                  <tr key={inst.id} className={`border-t border-gray-50 hover:bg-gray-50/60 group ${over ? "bg-red-50/30" : isToday ? "bg-amber-50/30" : ""}`}>
+                  <tr key={inst.id} className={`border-t border-gray-50 hover:bg-gray-50/60 ${over ? "bg-red-50/30" : isToday ? "bg-amber-50/30" : ""}`}>
                     <td className="px-4 py-3">
-                      <Link href={`/alunos?open=${inst.sale.client.id}`} className="font-medium text-gray-800 hover:text-indigo-600 transition-colors flex items-center gap-1 group/link">
+                      <Link href={`/alunos?open=${inst.sale.client.id}`}
+                        className="font-medium text-gray-800 hover:text-indigo-600 transition-colors flex items-center gap-1 group/link">
                         {inst.sale.client.name}
                         <ExternalLink className="w-3 h-3 text-gray-300 opacity-0 group-hover/link:opacity-100 transition-opacity" />
                       </Link>
                     </td>
                     <td className="px-4 py-3 hidden md:table-cell">
-                      <p className="text-xs text-gray-500 truncate max-w-[160px]">{inst.sale.description}</p>
+                      <p className="text-xs text-gray-500 truncate max-w-[200px]">{inst.sale.description}{suffix}</p>
                     </td>
                     <td className="px-4 py-3">
-                      <span className="text-xs text-gray-500">{inst.label || `${inst.number}ª`}</span>
+                      {paid ? (
+                        <p className="text-sm text-gray-400">{fmtDate(inst.paidAt)}</p>
+                      ) : (
+                        <>
+                          <p className={`text-sm font-medium ${over ? "text-red-600" : isToday ? "text-amber-600" : "text-gray-600"}`}>
+                            {fmtDate(inst.dueDate)}
+                          </p>
+                          {over    && <p className="text-[10px] text-red-400">{days}d atraso</p>}
+                          {isToday && <p className="text-[10px] text-amber-500">vence hoje</p>}
+                        </>
+                      )}
                     </td>
-                    <td className="px-4 py-3">
-                      <p className={`text-sm font-medium ${over ? "text-red-600" : isToday ? "text-amber-600" : "text-gray-600"}`}>
-                        {fmtDate(inst.dueDate)}
-                      </p>
-                      {over && <p className="text-[10px] text-red-400">{days}d atraso</p>}
-                      {isToday && <p className="text-[10px] text-amber-500">vence hoje</p>}
+                    <td className="px-4 py-3 hidden lg:table-cell text-xs text-gray-400">
+                      {inst.sale.paymentMethod || "—"}
                     </td>
                     <td className="px-4 py-3 text-center">
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                        paid ? "bg-green-100 text-green-700"
-                        : over ? "bg-red-100 text-red-600"
+                        paid    ? "bg-green-100 text-green-700"
+                        : over  ? "bg-red-100 text-red-600"
                         : isToday ? "bg-amber-100 text-amber-700"
                         : "bg-gray-100 text-gray-500"
                       }`}>
@@ -866,20 +874,33 @@ function ParcelasReceber({ sales, clients, onToggleParcela, onAddSale, onDeleteS
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <button
-                        onClick={() => onToggleParcela(inst.sale.id, inst.id, paid ? "pendente" : "pago")}
-                        title={paid ? "Desmarcar" : "Marcar como pago"}
-                        className={`opacity-0 group-hover:opacity-100 p-1.5 rounded-lg transition-all text-xs font-medium ${
-                          paid ? "text-gray-400 hover:text-amber-600 hover:bg-amber-50"
-                          : "text-indigo-500 hover:bg-indigo-50"
-                        }`}>
-                        <Check className="w-4 h-4"/>
-                      </button>
+                      <div className="flex items-center justify-center gap-1">
+                        <button
+                          onClick={() => onToggleParcela(inst.sale.id, inst.id, paid ? "pendente" : "pago")}
+                          title={paid ? "Desmarcar como pago" : "Marcar como pago"}
+                          className={`p-1.5 rounded-lg transition-all ${paid ? "text-gray-400 hover:text-amber-600 hover:bg-amber-50" : "text-indigo-500 hover:bg-indigo-50"}`}>
+                          <Check className="w-4 h-4"/>
+                        </button>
+                        <Link href={`/alunos?open=${inst.sale.client.id}`}
+                          title="Abrir aluno"
+                          className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all">
+                          <ExternalLink className="w-4 h-4"/>
+                        </Link>
+                      </div>
                     </td>
                   </tr>
                 );
               })}
             </tbody>
+            <tfoot>
+              <tr className="border-t-2 border-gray-200 bg-gray-50">
+                <td colSpan={5} className="px-4 py-3 text-sm font-bold text-gray-500 uppercase">Total</td>
+                <td className="px-4 py-3 text-right text-base font-bold text-gray-700">
+                  {fmt(current.reduce((s,i) => s+i.amount, 0))}
+                </td>
+                <td/>
+              </tr>
+            </tfoot>
           </table>
         </div>
       )}
@@ -1313,7 +1334,7 @@ export default function FinanceiroPage() {
     {key:"fluxo",      label:"Fluxo de Caixa",      icon:<LayoutGrid className="w-4 h-4"/>},
     {key:"pagar",      label:"Contas a Pagar",       icon:<CreditCard className="w-4 h-4"/>},
     {key:"faturamento",label:"Faturamento",           icon:<Receipt className="w-4 h-4"/>},
-    {key:"parcelas",   label:"Parcelas a Receber",   icon:<ListChecks className="w-4 h-4"/>},
+    {key:"parcelas",   label:"Contas a Receber",      icon:<ListChecks className="w-4 h-4"/>},
     {key:"alertas",    label:"Cobranças",             icon:<AlertCircle className="w-4 h-4"/>},
   ];
 
@@ -1335,6 +1356,22 @@ export default function FinanceiroPage() {
     )
     .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime())
     .slice(0, 8);
+
+  // ── KPI: resumo executivo do dashboard ──────────────────────────
+  const _next30d       = new Date(_todayEnd.getTime() + 30 * 24 * 60 * 60 * 1000);
+  const _todayStartKpi = new Date(); _todayStartKpi.setHours(0, 0, 0, 0);
+  const _currentMonth  = new Date();
+  const currentMonthTxs = allTxs.filter(t => inMonth(_currentMonth, t.dueDate) || inMonth(_currentMonth, t.paidAt));
+  const kpiFaturamento   = currentMonthTxs.filter(t => t.type === "receita").reduce((s,t) => s+t.amount, 0);
+  const kpiCaixaRecebido = currentMonthTxs.filter(t => t.type === "receita" && t.status === "pago").reduce((s,t) => s+t.amount, 0);
+  const kpiContasReceber = allTxs.filter(t => t.type==="receita" && t.status!=="pago" && t.status!=="cancelado").reduce((s,t) => s+t.amount, 0);
+  const kpiContasPagar   = txs.filter(t => t.type==="despesa" && t.status!=="pago" && t.status!=="cancelado").reduce((s,t) => s+t.amount, 0);
+  const allInstFlat = sales.flatMap(s => s.installments.map(i => ({ ...i, sale: s })));
+  const kpiVendidasList  = allInstFlat.filter(i => i.status!=="pago" && new Date(i.dueDate) < _todayStartKpi);
+  const kpiVendidasTotal = kpiVendidasList.reduce((s,i) => s+i.amount, 0);
+  const kpiVendidasCount = kpiVendidasList.length;
+  const kpiProx7Total    = allInstFlat.filter(i => i.status!=="pago" && new Date(i.dueDate) > _todayEnd && new Date(i.dueDate) <= _nextWeek).reduce((s,i) => s+i.amount, 0);
+  const kpiProx30Total   = allInstFlat.filter(i => i.status!=="pago" && new Date(i.dueDate) > _todayEnd && new Date(i.dueDate) <= _next30d).reduce((s,i) => s+i.amount, 0);
 
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">
@@ -1370,38 +1407,46 @@ export default function FinanceiroPage() {
         </div>
 
         {/* ── KPI Cards ─────────────────────────────── */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
-          <div className="bg-green-50 rounded-2xl px-4 py-3 border border-green-100">
-            <p className="text-[10px] text-green-500 uppercase font-bold tracking-wide mb-0.5">Recebido</p>
-            <p className="text-lg font-bold text-green-700">{fmt(realR)}</p>
-            <p className="text-[10px] text-green-400">/ {fmt(totalR)} previsto</p>
-          </div>
-          <div className="bg-amber-50 rounded-2xl px-4 py-3 border border-amber-100">
-            <p className="text-[10px] text-amber-500 uppercase font-bold tracking-wide mb-0.5">A Receber</p>
-            <p className="text-lg font-bold text-amber-700">{fmt(totalR - realR)}</p>
-            <p className="text-[10px] text-amber-400">{monthTxs.filter(t=>t.type==="receita"&&t.status!=="pago").length} pendentes</p>
-          </div>
-          <div className="bg-red-50 rounded-2xl px-4 py-3 border border-red-100">
-            <p className="text-[10px] text-red-400 uppercase font-bold tracking-wide mb-0.5">Despesas</p>
-            <p className="text-lg font-bold text-red-600">{fmt(realD)}</p>
-            <p className="text-[10px] text-red-300">/ {fmt(totalD)} previsto</p>
-          </div>
-          <div className={`rounded-2xl px-4 py-3 border ${(realR-realD)>=0?"bg-indigo-50 border-indigo-100":"bg-orange-50 border-orange-100"}`}>
-            <p className={`text-[10px] uppercase font-bold tracking-wide mb-0.5 ${(realR-realD)>=0?"text-indigo-400":"text-orange-400"}`}>Lucro</p>
-            <p className={`text-lg font-bold ${(realR-realD)>=0?"text-indigo-700":"text-orange-600"}`}>{fmt(realR-realD)}</p>
-            <p className={`text-[10px] ${(realR-realD)>=0?"text-indigo-300":"text-orange-300"}`}>receitas − despesas</p>
-          </div>
-          <div className={`rounded-2xl px-4 py-3 border ${(saldo+realR-realD)>=0?"bg-gray-50 border-gray-200":"bg-red-50 border-red-200"}`}>
-            <div className="flex items-center gap-1 mb-0.5">
-              <Target className="w-3 h-3 text-gray-400"/>
-              <p className="text-[10px] text-gray-400 uppercase font-bold tracking-wide">Saldo Final</p>
+        <div className="space-y-2.5 mb-4">
+          {/* Linha 1: visão do mês atual */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="bg-indigo-50 rounded-2xl px-4 py-3 border border-indigo-100">
+              <p className="text-[10px] text-indigo-500 uppercase font-bold tracking-wide mb-0.5">Faturamento do mês</p>
+              <p className="text-lg font-bold text-indigo-700">{fmt(kpiFaturamento)}</p>
+              <p className="text-[10px] text-indigo-400">total emitido este mês</p>
             </div>
-            <p className={`text-lg font-bold ${(saldo+realR-realD)>=0?"text-gray-800":"text-red-600"}`}>{fmt(saldo+realR-realD)}</p>
-            <div className="flex items-center gap-1 mt-0.5">
-              <Wallet className="w-2.5 h-2.5 text-gray-300"/>
-              <input value={saldoInicial} onChange={e=>setSaldoInicial(e.target.value)}
-                placeholder="saldo inicial 0,00"
-                className="text-[10px] text-gray-400 bg-transparent w-full focus:outline-none"/>
+            <div className="bg-green-50 rounded-2xl px-4 py-3 border border-green-100">
+              <p className="text-[10px] text-green-500 uppercase font-bold tracking-wide mb-0.5">Caixa recebido</p>
+              <p className="text-lg font-bold text-green-700">{fmt(kpiCaixaRecebido)}</p>
+              <p className="text-[10px] text-green-400">recebido este mês</p>
+            </div>
+            <div className="bg-amber-50 rounded-2xl px-4 py-3 border border-amber-100">
+              <p className="text-[10px] text-amber-500 uppercase font-bold tracking-wide mb-0.5">Contas a receber</p>
+              <p className="text-lg font-bold text-amber-700">{fmt(kpiContasReceber)}</p>
+              <p className="text-[10px] text-amber-400">pendente no geral</p>
+            </div>
+            <div className="bg-red-50 rounded-2xl px-4 py-3 border border-red-100">
+              <p className="text-[10px] text-red-400 uppercase font-bold tracking-wide mb-0.5">Contas a pagar</p>
+              <p className="text-lg font-bold text-red-600">{fmt(kpiContasPagar)}</p>
+              <p className="text-[10px] text-red-300">despesas em aberto</p>
+            </div>
+          </div>
+          {/* Linha 2: urgência e projeção */}
+          <div className="grid grid-cols-3 gap-3">
+            <div className={`rounded-2xl px-4 py-3 border ${kpiVendidasCount>0?"bg-rose-50 border-rose-200":"bg-gray-50 border-gray-100"}`}>
+              <p className={`text-[10px] uppercase font-bold tracking-wide mb-0.5 ${kpiVendidasCount>0?"text-rose-500":"text-gray-400"}`}>Parcelas vencidas</p>
+              <p className={`text-lg font-bold ${kpiVendidasCount>0?"text-rose-700":"text-gray-500"}`}>{fmt(kpiVendidasTotal)}</p>
+              <p className={`text-[10px] ${kpiVendidasCount>0?"text-rose-400":"text-gray-400"}`}>{kpiVendidasCount} parcela{kpiVendidasCount!==1?"s":""} atrasada{kpiVendidasCount!==1?"s":""}</p>
+            </div>
+            <div className="bg-blue-50 rounded-2xl px-4 py-3 border border-blue-100">
+              <p className="text-[10px] text-blue-500 uppercase font-bold tracking-wide mb-0.5">Receita prevista 7 dias</p>
+              <p className="text-lg font-bold text-blue-700">{fmt(kpiProx7Total)}</p>
+              <p className="text-[10px] text-blue-400">vence nos próximos 7 dias</p>
+            </div>
+            <div className="bg-sky-50 rounded-2xl px-4 py-3 border border-sky-100">
+              <p className="text-[10px] text-sky-500 uppercase font-bold tracking-wide mb-0.5">Receita prevista 30 dias</p>
+              <p className="text-lg font-bold text-sky-700">{fmt(kpiProx30Total)}</p>
+              <p className="text-[10px] text-sky-400">vence nos próximos 30 dias</p>
             </div>
           </div>
         </div>

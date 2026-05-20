@@ -676,7 +676,7 @@ function PainelTab({ allTxs, goals, onSaveGoal }: {
 
 // ─── Aba 2: Mês Atual ─────────────────────────────────────────────
 function MesAtualTab({ allTxs, txs, monthDate, clients, incomeCats, expenseCats, recvMethods, payMethods,
-  monthClose, onSaveClose, onToggle, onDelete, onAdd, onAddSale, onEditTx }: {
+  monthClose, onSaveClose, onToggle, onDelete, onAdd, onAddSale, onEditTx, onUpdateTx, onUpdateInstallment }: {
   allTxs: Tx[]; txs: Tx[]; monthDate: Date; clients: Client[];
   incomeCats: string[]; expenseCats: string[]; recvMethods: string[]; payMethods: string[];
   monthClose: MonthClose | null;
@@ -686,12 +686,16 @@ function MesAtualTab({ allTxs, txs, monthDate, clients, incomeCats, expenseCats,
   onAdd: (tx:Tx)=>void;
   onAddSale: (sale:Sale)=>void;
   onEditTx: (tx:Tx)=>void;
+  onUpdateTx: (id:string, data:Partial<Tx>) => void;
+  onUpdateInstallment: (saleId:string, instId:string, data:Partial<Installment>) => void;
 }) {
   const [saldoI, setSaldoI] = useState(String(monthClose?.saldoInicial??""));
   const [saldoB, setSaldoB] = useState(monthClose?.saldoBanco!=null?String(monthClose.saldoBanco):"");
   const [notes, setNotes] = useState(monthClose?.notes||"");
   const [modal, setModal] = useState<null|"receita"|"despesa"|"venda">(null);
   const [editTx, setEditTx] = useState<Tx|null>(null);
+  const [savingField, setSavingField] = useState<string|null>(null);
+  const [savedField, setSavedField] = useState<string|null>(null);
 
   useEffect(()=>{
     setSaldoI(String(monthClose?.saldoInicial??""));
@@ -700,10 +704,20 @@ function MesAtualTab({ allTxs, txs, monthDate, clients, incomeCats, expenseCats,
   },[monthClose]);
 
   async function saveField(field: string, raw: string) {
+    setSavingField(field);
     const num = parseFloat(raw.replace(",","."));
     await onSaveClose({ [field]: isNaN(num) ? null : num });
+    setSavingField(null);
+    setSavedField(field);
+    setTimeout(()=>setSavedField(f=>f===field?null:f),2000);
   }
-  async function saveNotes() { await onSaveClose({ notes: notes||null }); }
+  async function saveNotes() {
+    setSavingField("notes");
+    await onSaveClose({ notes: notes||null });
+    setSavingField(null);
+    setSavedField("notes");
+    setTimeout(()=>setSavedField(f=>f==="notes"?null:f),2000);
+  }
 
   const mRecs = allTxs.filter(t=>t.type==="receita"&&(inMonth(monthDate,t.dueDate)||inMonth(monthDate,t.paidAt)))
     .sort((a,b)=>new Date(txDate(a)||"").getTime()-new Date(txDate(b)||"").getTime());
@@ -746,8 +760,12 @@ function MesAtualTab({ allTxs, txs, monthDate, clients, incomeCats, expenseCats,
               <tr className="border-b border-gray-50">
                 <td className="px-5 py-3 text-gray-500">Saldo inicial<span className="ml-1.5 text-[10px] text-gray-300">manual</span></td>
                 <td className="px-5 py-3 text-right">
-                  <input value={saldoI} onChange={e=>setSaldoI(e.target.value)} onBlur={()=>saveField("saldoInicial",saldoI)}
-                    type="number" step="0.01" placeholder="0,00" className={iCls}/>
+                  <div className="flex items-center justify-end gap-2">
+                    {savingField==="saldoInicial"&&<span className="text-[10px] text-gray-400">salvando...</span>}
+                    {savedField==="saldoInicial"&&<span className="text-[10px] text-green-500">salvo ✓</span>}
+                    <input value={saldoI} onChange={e=>setSaldoI(e.target.value)} onBlur={()=>saveField("saldoInicial",saldoI)}
+                      type="number" step="0.01" placeholder="0,00" className={iCls}/>
+                  </div>
                 </td>
               </tr>
               <tr className="border-b border-gray-50">
@@ -765,8 +783,12 @@ function MesAtualTab({ allTxs, txs, monthDate, clients, incomeCats, expenseCats,
               <tr className="border-b border-gray-50">
                 <td className="px-5 py-3 text-gray-500">Saldo banco<span className="ml-1.5 text-[10px] text-gray-300">opcional</span></td>
                 <td className="px-5 py-3 text-right">
-                  <input value={saldoB} onChange={e=>setSaldoB(e.target.value)} onBlur={()=>saveField("saldoBanco",saldoB)}
-                    type="number" step="0.01" placeholder="—" className={iCls}/>
+                  <div className="flex items-center justify-end gap-2">
+                    {savingField==="saldoBanco"&&<span className="text-[10px] text-gray-400">salvando...</span>}
+                    {savedField==="saldoBanco"&&<span className="text-[10px] text-green-500">salvo ✓</span>}
+                    <input value={saldoB} onChange={e=>setSaldoB(e.target.value)} onBlur={()=>saveField("saldoBanco",saldoB)}
+                      type="number" step="0.01" placeholder="—" className={iCls}/>
+                  </div>
                 </td>
               </tr>
               {diff!==null&&(
@@ -778,8 +800,12 @@ function MesAtualTab({ allTxs, txs, monthDate, clients, incomeCats, expenseCats,
               <tr>
                 <td className="px-5 py-3 text-gray-500">Observações</td>
                 <td className="px-5 py-3 text-right">
-                  <input value={notes} onChange={e=>setNotes(e.target.value)} onBlur={saveNotes}
-                    placeholder="Notas do fechamento..." className="border border-gray-200 rounded px-2 py-1 text-sm w-64 focus:outline-none focus:border-indigo-400"/>
+                  <div className="flex items-center justify-end gap-2">
+                    {savingField==="notes"&&<span className="text-[10px] text-gray-400">salvando...</span>}
+                    {savedField==="notes"&&<span className="text-[10px] text-green-500">salvo ✓</span>}
+                    <input value={notes} onChange={e=>setNotes(e.target.value)} onBlur={saveNotes}
+                      placeholder="Notas do fechamento..." className="border border-gray-200 rounded px-2 py-1 text-sm w-64 focus:outline-none focus:border-indigo-400"/>
+                  </div>
                 </td>
               </tr>
             </tbody>
@@ -890,13 +916,15 @@ function MesAtualTab({ allTxs, txs, monthDate, clients, incomeCats, expenseCats,
 
   async function handleEditSave(tx: Tx, data: Record<string,unknown>) {
     if (tx.id.startsWith("inst_")&&tx._saleId&&tx._installmentId) {
-      await fetch(`/api/financeiro/vendas/${tx._saleId}/parcelas/${tx._installmentId}`,{
+      const res = await fetch(`/api/financeiro/vendas/${tx._saleId}/parcelas/${tx._installmentId}`,{
         method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(data),
       });
+      if (res.ok) { const updated=await res.json(); onUpdateInstallment(tx._saleId,tx._installmentId,updated); }
     } else {
-      await fetch(`/api/financeiro/lancamentos/${tx.id}`,{
+      const res = await fetch(`/api/financeiro/lancamentos/${tx.id}`,{
         method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(data),
       });
+      if (res.ok) { const updated=await res.json(); onUpdateTx(tx.id,updated); }
     }
   }
 }
@@ -994,6 +1022,7 @@ function PlanejamentoTab({ allTxs, txs, monthCloses, onSaveClose }: {
   const [year, setYear] = useState(currentYear);
   const [editing, setEditing] = useState<{month:string;field:string}|null>(null);
   const [draft, setDraft] = useState("");
+  const [savingCell, setSavingCell] = useState(false);
 
   const projFields: {field: keyof MonthClose; label: string}[] = [
     {field:"receitasProj",label:"Rec. Proj."},
@@ -1023,9 +1052,11 @@ function PlanejamentoTab({ allTxs, txs, monthCloses, onSaveClose }: {
   }
 
   async function commitEdit() {
-    if (!editing) return;
+    if (!editing||savingCell) return;
     const num = parseFloat(draft.replace(",","."));
+    setSavingCell(true);
     await onSaveClose(editing.month,{[editing.field]:isNaN(num)?null:num});
+    setSavingCell(false);
     setEditing(null);
   }
 
@@ -1075,7 +1106,8 @@ function PlanejamentoTab({ allTxs, txs, monthCloses, onSaveClose }: {
                           {isEd ? (
                             <input autoFocus value={draft} onChange={e=>setDraft(e.target.value)}
                               onBlur={commitEdit} onKeyDown={e=>{if(e.key==="Enter")commitEdit();if(e.key==="Escape")setEditing(null);}}
-                              className="w-20 border border-indigo-300 rounded px-1 py-0.5 text-xs focus:outline-none text-right bg-white"
+                              disabled={savingCell}
+                              className={`w-20 border border-indigo-300 rounded px-1 py-0.5 text-xs focus:outline-none text-right bg-white ${savingCell?"opacity-50 cursor-wait":""}`}
                               type="number" step="0.01"/>
                           ) : (
                             <span className={`${val!=null?"text-indigo-600 font-medium":"text-gray-200"} group-hover/cell:text-indigo-500`}>
@@ -1200,13 +1232,15 @@ function ConfiguracoesTab({ configs, onAdd, onDelete }: {
 
 // ─── Aba 5: Lançamentos ───────────────────────────────────────────
 function LancamentosTab({ allTxs, txs, clients, incomeCats, expenseCats, recvMethods, payMethods,
-  onToggle, onDelete, onAdd, onAddSale }: {
+  onToggle, onDelete, onAdd, onAddSale, onUpdateTx, onUpdateInstallment }: {
   allTxs: Tx[]; txs: Tx[]; clients: Client[];
   incomeCats: string[]; expenseCats: string[]; recvMethods: string[]; payMethods: string[];
   onToggle:(id:string,status:string)=>void;
   onDelete:(id:string)=>void;
   onAdd:(tx:Tx)=>void;
   onAddSale:(sale:Sale)=>void;
+  onUpdateTx:(id:string,data:Partial<Tx>)=>void;
+  onUpdateInstallment:(saleId:string,instId:string,data:Partial<Installment>)=>void;
 }) {
   const today = new Date();
   const [tipo,setTipo] = useState<"todos"|"receita"|"despesa">("todos");
@@ -1243,13 +1277,15 @@ function LancamentosTab({ allTxs, txs, clients, incomeCats, expenseCats, recvMet
 
   async function handleEditSave(tx: Tx, data: Record<string,unknown>) {
     if (tx.id.startsWith("inst_")&&tx._saleId&&tx._installmentId) {
-      await fetch(`/api/financeiro/vendas/${tx._saleId}/parcelas/${tx._installmentId}`,{
+      const res = await fetch(`/api/financeiro/vendas/${tx._saleId}/parcelas/${tx._installmentId}`,{
         method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(data),
       });
+      if (res.ok) { const updated=await res.json(); onUpdateInstallment(tx._saleId,tx._installmentId,updated); }
     } else {
-      await fetch(`/api/financeiro/lancamentos/${tx.id}`,{
+      const res = await fetch(`/api/financeiro/lancamentos/${tx.id}`,{
         method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(data),
       });
+      if (res.ok) { const updated=await res.json(); onUpdateTx(tx.id,updated); }
     }
   }
 
@@ -1465,6 +1501,16 @@ export default function FinanceiroPage() {
   function addTx(tx:Tx) { setTxs(p=>[...p,tx]); }
   function addSale(sale:Sale) { setSales(p=>[sale,...p]); }
 
+  function updateTx(id:string, data:Partial<Tx>) {
+    setTxs(p=>p.map(t=>t.id===id?{...t,...data}:t));
+  }
+
+  function updateInstallment(saleId:string, instId:string, data:Partial<Installment>) {
+    setSales(p=>p.map(s=>s.id===saleId
+      ?{...s,installments:s.installments.map(i=>i.id===instId?{...i,...data}:i)}
+      :s));
+  }
+
   async function toggleTx(id:string,status:string) {
     if (id.startsWith("inst_")) {
       const instId=id.replace("inst_","");
@@ -1597,7 +1643,7 @@ export default function FinanceiroPage() {
                 incomeCats={incomeCats} expenseCats={expenseCats} recvMethods={recvMethods} payMethods={payMethods}
                 monthClose={curMonthClose} onSaveClose={saveMonthCloseForDate}
                 onToggle={toggleTx} onDelete={deleteTx} onAdd={addTx} onAddSale={addSale}
-                onEditTx={()=>{}}
+                onEditTx={()=>{}} onUpdateTx={updateTx} onUpdateInstallment={updateInstallment}
               />
             )}
             {tab==="planejamento"&&(
@@ -1611,6 +1657,7 @@ export default function FinanceiroPage() {
                 allTxs={allTxs} txs={txs} clients={clients}
                 incomeCats={incomeCats} expenseCats={expenseCats} recvMethods={recvMethods} payMethods={payMethods}
                 onToggle={toggleTx} onDelete={deleteTx} onAdd={addTx} onAddSale={addSale}
+                onUpdateTx={updateTx} onUpdateInstallment={updateInstallment}
               />
             )}
           </>

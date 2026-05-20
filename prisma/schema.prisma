@@ -33,8 +33,10 @@ model User {
   monthlyGoals     MonthlyGoal[]
   servicePlans     ServicePlan[]
   whatsAppEvents   WhatsAppEvent[]
-  openClawEvents   OpenClawEvent[]
-  contentIdeas     ContentIdea[]
+  openClawEvents       OpenClawEvent[]
+  contentIdeas         ContentIdea[]
+  financialConfigs     FinancialConfig[]
+  financialMonthCloses FinancialMonthClose[]
 }
 
 model Account {
@@ -705,4 +707,45 @@ model StudentJourney {
   client          Client           @relation(fields: [clientId], references: [id], onDelete: Cascade)
   checkoutSession CheckoutSession? @relation(fields: [checkoutSessionId], references: [id], onDelete: SetNull)
   sale            Sale?            @relation(fields: [saleId], references: [id], onDelete: SetNull)
+}
+
+// Configurações financeiras (categorias, formas, metas)
+model FinancialConfig {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String   // income_cat | expense_cat | recv_method | pay_method | goal
+  value     String
+  key       String?  // para goals: cap_giro, reserva_fin, reserva_oport, rec_mensal, dist_lucros
+  order     Int      @default(0)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+}
+
+// Fechamento mensal (saldo inicial, saldo banco, projeções)
+model FinancialMonthClose {
+  id            String   @id @default(cuid())
+  userId        String
+  month         String   // YYYY-MM
+  saldoInicial  Float    @default(0)
+  saldoBanco    Float?
+  notes         String?
+  receitasProj  Float?
+  custosFixos   Float?
+  custosVar     Float?
+  despesas      Float?
+  investimentos Float?
+  prolabore     Float?
+  reservas      Float?
+  distLucros    Float?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, month])
 }

@@ -8,8 +8,9 @@
  *   --include-month-closes   também apaga FinancialMonthClose
  *   --include-events         também apaga WhatsAppEvent e OpenClawEvent
  *   --include-deals          também apaga Deal (leads)
+ *   --include-clients        também apaga Client e todos os dados vinculados
  *
- * O que NÃO é apagado:
+ * O que NUNCA é apagado:
  *   User, FinancialConfig, ServicePlan, estrutura do banco, variáveis de ambiente
  */
 
@@ -30,6 +31,7 @@ const args = process.argv.slice(2);
 const INCLUDE_MONTH_CLOSES = args.includes("--include-month-closes");
 const INCLUDE_EVENTS       = args.includes("--include-events");
 const INCLUDE_DEALS        = args.includes("--include-deals");
+const INCLUDE_CLIENTS      = args.includes("--include-clients");
 
 // ─── Cliente Prisma ───────────────────────────────────────────────
 
@@ -64,6 +66,7 @@ async function main() {
     whatsAppEvents:   INCLUDE_EVENTS       ? await prisma.whatsAppEvent.count()       : null,
     openClawEvents:   INCLUDE_EVENTS       ? await prisma.openClawEvent.count()       : null,
     deals:            INCLUDE_DEALS        ? await prisma.deal.count()                : null,
+    clients:          INCLUDE_CLIENTS      ? await prisma.client.count()              : null,
   };
 
   // 2. O que SERÁ apagado
@@ -85,13 +88,22 @@ async function main() {
   if (INCLUDE_DEALS) {
     console.log(yel(`  Deal                : ${counts.deals} [--include-deals]`));
   }
+  if (INCLUDE_CLIENTS) {
+    console.log(yel(`  Client              : ${counts.clients} [--include-clients]`));
+    console.log(yel(`    + cascade: Interaction, Anamnese, WorkoutPlan, BodyRecord,`));
+    console.log(yel(`               CheckIn, Invoice, Contract, StudentFile, Deal`));
+    console.log(yel(`    + prévia:  FollowUpLog, Project (+ Task), nullify CalendarEvent/TodoTask`));
+  }
 
   // 3. O que NÃO será apagado
   console.log("\n" + bold("O que NÃO será apagado:") + "\n" + line());
-  console.log(grn("  User, FinancialConfig, ServicePlan, Client"));
+  const preserved = ["User", "FinancialConfig", "ServicePlan"];
+  if (!INCLUDE_CLIENTS) preserved.push("Client");
+  console.log(grn("  " + preserved.join(", ")));
   if (!INCLUDE_MONTH_CLOSES) console.log(grn("  FinancialMonthClose (use --include-month-closes para incluir)"));
   if (!INCLUDE_EVENTS)       console.log(grn("  WhatsAppEvent, OpenClawEvent (use --include-events para incluir)"));
   if (!INCLUDE_DEALS)        console.log(grn("  Deal (use --include-deals para incluir)"));
+  if (!INCLUDE_CLIENTS)      console.log(grn("  Client e dados vinculados (use --include-clients para incluir)"));
 
   // 4. Verificar confirmação
   if (!CONFIRM) {
@@ -102,7 +114,8 @@ async function main() {
     console.log("  Flags opcionais:");
     console.log("    --include-month-closes   apaga também FinancialMonthClose");
     console.log("    --include-events         apaga também WhatsAppEvent e OpenClawEvent");
-    console.log("    --include-deals          apaga também Deal (leads)\n");
+    console.log("    --include-deals          apaga também Deal (leads)");
+    console.log("    --include-clients        apaga também Client e todos os dados vinculados\n");
     await prisma.$disconnect();
     return;
   }
@@ -157,6 +170,38 @@ async function main() {
     const r9 = await prisma.deal.deleteMany({});
     deleted["Deal"] = r9.count;
     console.log(`  ✓ Deal                : ${r9.count} apagados`);
+  }
+
+  if (INCLUDE_CLIENTS) {
+    // Relações sem cascade que bloqueiam a deleção do Client:
+    // FollowUpLog.clientId (String, required, sem cascade) → delete
+    const rf1 = await prisma.followUpLog.deleteMany({});
+    console.log(`  ✓ FollowUpLog         : ${rf1.count} apagados (pré-Client)`);
+
+    // Project.clientId (String, required, sem cascade) → delete (cascata Task)
+    const rf2 = await prisma.project.deleteMany({});
+    console.log(`  ✓ Project + Task      : ${rf2.count} projetos apagados (pré-Client, cascade Task)`);
+
+    // CalendarEvent.clientId (String?, sem cascade) → nullify
+    await prisma.calendarEvent.updateMany({
+      where: { clientId: { not: null } },
+      data: { clientId: null },
+    });
+    console.log(`  ✓ CalendarEvent       : clientId nullificado (eventos mantidos)`);
+
+    // TodoTask.clientId (String?, sem cascade) → nullify
+    await prisma.todoTask.updateMany({
+      where: { clientId: { not: null } },
+      data: { clientId: null },
+    });
+    console.log(`  ✓ TodoTask            : clientId nullificado (tarefas mantidas)`);
+
+    // Agora seguro deletar Client — cascade cobre:
+    // Interaction, Anamnese, WorkoutPlan, BodyRecord, CheckIn,
+    // Invoice, Contract, StudentFile, Deal (se restantes)
+    const rc = await prisma.client.deleteMany({});
+    deleted["Client"] = rc.count;
+    console.log(`  ✓ Client              : ${rc.count} apagados (cascade: fichas, treinos, contratos...)`);
   }
 
   // 6. Resumo final

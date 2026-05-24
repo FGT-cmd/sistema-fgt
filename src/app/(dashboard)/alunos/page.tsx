@@ -39,6 +39,7 @@ type InvoiceIssue = {
   externalProvider?: string | null;
   invoiceNumber?: string | null;
   pdfUrl?: string | null;
+  xmlUrl?: string | null;
   errorMessage?: string | null;
   createdAt: string;
 };
@@ -957,6 +958,9 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
   const [uploadingFile, setUploadingFile] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const fileAnyRef = useRef<HTMLInputElement>(null);
+  // notas fiscais
+  const [invoiceIssues, setInvoiceIssues] = useState<InvoiceIssue[]>(aluno.invoiceIssues ?? []);
+  const [emittingInvoiceId, setEmittingInvoiceId] = useState<string | null>(null);
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
 
   useEffect(() => {
@@ -1039,6 +1043,30 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
     if (data.error) { setUploadError(data.error); setUploading(false); return; }
     onUpdate({ ...aluno, files: [...(aluno.files || []).filter(f => f.category !== "contrato"), data] });
     setUploading(false);
+  }
+
+  async function emitirNota(invoiceIssueId: string) {
+    setEmittingInvoiceId(invoiceIssueId);
+    try {
+      const res = await fetch("/api/fiscal/notasy/emit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ invoiceIssueId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const updated = data.invoice ?? { id: invoiceIssueId, status: "error", errorMessage: data.error };
+        setInvoiceIssues(prev => prev.map(inv => inv.id === invoiceIssueId ? { ...inv, ...updated } : inv));
+      } else {
+        setInvoiceIssues(prev => prev.map(inv => inv.id === invoiceIssueId ? { ...inv, ...data } : inv));
+      }
+    } catch {
+      setInvoiceIssues(prev => prev.map(inv =>
+        inv.id === invoiceIssueId ? { ...inv, status: "error", errorMessage: "Falha de rede ao emitir nota" } : inv
+      ));
+    } finally {
+      setEmittingInvoiceId(null);
+    }
   }
 
   async function handleCreateTask() {
@@ -1440,36 +1468,71 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
           </div>
 
           {/* Notas Fiscais */}
-          {aluno.invoiceIssues && aluno.invoiceIssues.length > 0 && (
+          {invoiceIssues.length > 0 && (
             <div className="px-5 py-4">
               <span className="text-[11px] font-bold text-gray-400 uppercase block mb-3">Notas Fiscais</span>
               <div className="space-y-2">
-                {aluno.invoiceIssues.map(inv => {
+                {invoiceIssues.map(inv => {
                   const statusCfgInv: Record<string, { label: string; cls: string }> = {
                     ready:    { label: "Pronta",     cls: "bg-blue-100 text-blue-700" },
+                    sending:  { label: "Enviando…",  cls: "bg-indigo-100 text-indigo-600" },
                     pending:  { label: "Pendente",   cls: "bg-amber-100 text-amber-700" },
                     sent:     { label: "Enviada",    cls: "bg-indigo-100 text-indigo-700" },
                     issued:   { label: "Emitida",    cls: "bg-green-100 text-green-700" },
                     error:    { label: "Erro",       cls: "bg-red-100 text-red-700" },
-                    canceled: { label: "Cancelada",  cls: "bg-gray-100 text-gray-500" },
+                    cancelled:{ label: "Cancelada",  cls: "bg-gray-100 text-gray-500" },
                   };
                   const sc = statusCfgInv[inv.status] ?? { label: inv.status, cls: "bg-gray-100 text-gray-500" };
+                  const isEmitting = emittingInvoiceId === inv.id;
+                  const canEmit = inv.status === "ready";
+                  const canResend = inv.status === "error";
                   return (
                     <div key={inv.id} className="bg-gray-50 rounded-xl p-3 border border-gray-100">
                       <div className="flex items-center justify-between gap-2 mb-1">
                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${sc.cls}`}>{sc.label}</span>
-                        {inv.externalProvider && <span className="text-[10px] text-gray-400 uppercase">{inv.externalProvider}</span>}
-                        {inv.invoiceNumber && <span className="text-[10px] font-mono text-gray-500">#{inv.invoiceNumber}</span>}
+                        <div className="flex items-center gap-2 ml-auto">
+                          {inv.externalProvider && (
+                            <span className="text-[10px] text-gray-400 uppercase">{inv.externalProvider}</span>
+                          )}
+                          {inv.invoiceNumber && (
+                            <span className="text-[10px] font-mono text-gray-500">#{inv.invoiceNumber}</span>
+                          )}
+                        </div>
                       </div>
                       <p className="text-xs text-gray-700 font-medium truncate">{inv.serviceDescription}</p>
                       <p className="text-xs text-gray-500">{fmt(inv.amount)}</p>
-                      {inv.errorMessage && <p className="text-[10px] text-red-500 mt-1 truncate">{inv.errorMessage}</p>}
-                      {inv.pdfUrl && (
-                        <a href={inv.pdfUrl} target="_blank" rel="noopener noreferrer"
-                          className="text-[10px] text-indigo-600 hover:underline flex items-center gap-1 mt-1">
-                          <ExternalLink className="w-3 h-3" /> PDF da nota
-                        </a>
+                      {inv.errorMessage && (
+                        <p className="text-[10px] text-red-500 mt-1 break-words">{inv.errorMessage}</p>
                       )}
+                      <div className="flex items-center gap-2 mt-2 flex-wrap">
+                        {inv.pdfUrl && (
+                          <a href={inv.pdfUrl} target="_blank" rel="noopener noreferrer"
+                            className="text-[10px] text-indigo-600 hover:underline flex items-center gap-1">
+                            <ExternalLink className="w-3 h-3" /> PDF
+                          </a>
+                        )}
+                        {inv.xmlUrl && (
+                          <a href={inv.xmlUrl} target="_blank" rel="noopener noreferrer"
+                            className="text-[10px] text-indigo-600 hover:underline flex items-center gap-1">
+                            <ExternalLink className="w-3 h-3" /> XML
+                          </a>
+                        )}
+                        {(canEmit || canResend) && (
+                          <button
+                            onClick={() => emitirNota(inv.id)}
+                            disabled={isEmitting}
+                            className="ml-auto flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-semibold text-white disabled:opacity-60"
+                            style={{ background: canResend ? "#ef4444" : "#6366f1" }}
+                          >
+                            {isEmitting
+                              ? <><Loader2 className="w-3 h-3 animate-spin" /> Enviando…</>
+                              : canResend
+                                ? <><RefreshCw className="w-3 h-3" /> Reenviar</>
+                                : <><FileText className="w-3 h-3" /> Emitir na Notasy</>
+                            }
+                          </button>
+                        )}
+                      </div>
                     </div>
                   );
                 })}

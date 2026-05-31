@@ -6,9 +6,15 @@ export async function GET(req: NextRequest) {
   const user = await getDefaultUser();
   const { searchParams } = new URL(req.url);
   const limit = Math.min(parseInt(searchParams.get("limit") || "30"), 100);
+  const source = searchParams.get("source") || undefined;
+  const status = searchParams.get("status") || undefined;
 
   const events = await prisma.openClawEvent.findMany({
-    where: { userId: user.id },
+    where: {
+      userId: user.id,
+      ...(source ? { source } : {}),
+      ...(status ? { executionStatus: status } : {}),
+    },
     orderBy: { createdAt: "desc" },
     take: limit,
     select: {

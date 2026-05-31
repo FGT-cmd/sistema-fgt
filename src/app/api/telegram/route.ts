@@ -78,17 +78,38 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// Endpoint de verificação do webhook (GET)
 export async function GET() {
-  return NextResponse.json({
-    status: "Telegram webhook ativo",
+  const base = {
     botConfigured: !!BOT_TOKEN,
     chatConfigured: !!ALLOWED_CHAT,
-    configSteps: !BOT_TOKEN ? [
-      "1. Crie um bot via @BotFather no Telegram",
-      "2. Adicione TELEGRAM_BOT_TOKEN ao .env",
-      "3. Adicione TELEGRAM_ALLOWED_CHAT ao .env (seu chat_id)",
-      "4. Configure o webhook: curl 'https://api.telegram.org/bot<TOKEN>/setWebhook?url=<URL>/api/telegram'",
-    ] : ["Bot configurado! ✅"],
-  });
+  };
+
+  if (!BOT_TOKEN) {
+    return NextResponse.json({ ...base, ok: false, error: "TELEGRAM_BOT_TOKEN não configurado" });
+  }
+
+  try {
+    const [meRes, { prisma }] = await Promise.all([
+      fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getMe`),
+      import("@/lib/prisma"),
+    ]);
+    const me = await meRes.json();
+
+    const lastEvent = await prisma.openClawEvent.findFirst({
+      where: { source: "telegram" },
+      orderBy: { createdAt: "desc" },
+      select: { rawCommand: true, createdAt: true, executionStatus: true },
+    });
+
+    return NextResponse.json({
+      ...base,
+      ok: me.ok,
+      botUsername: me.result?.username ?? null,
+      botFirstName: me.result?.first_name ?? null,
+      lastEvent: lastEvent ?? null,
+      error: me.ok ? undefined : me.description,
+    });
+  } catch {
+    return NextResponse.json({ ...base, ok: false, error: "Erro ao conectar com a API do Telegram" });
+  }
 }

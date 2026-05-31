@@ -3,8 +3,9 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   ChevronLeft, ChevronRight, Plus, Clock, Calendar, ExternalLink,
-  RefreshCw, Trash2, X, CheckCircle2, AlertCircle,
+  RefreshCw, Trash2, X, CheckCircle2, AlertCircle, Users, ListChecks,
 } from "lucide-react";
+import Link from "next/link";
 
 const DAYS   = ["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"];
 const MONTHS = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
@@ -38,6 +39,20 @@ type GEvent = {
   htmlLink?: string;
 };
 
+type AlunoOption = { id: string; name: string };
+
+// Vínculo aluno armazenado na description: [FGT:clientId:clientName]
+function extractClient(ev: GEvent): { id: string; name: string } | null {
+  const m = ev.description?.match(/\[FGT:([^:]+):([^\]]+)\]/);
+  if (!m) return null;
+  return { id: m[1], name: m[2] };
+}
+
+function cleanDescription(desc?: string): string {
+  if (!desc) return "";
+  return desc.replace(/\[FGT:[^\]]+\]/g, "").trim();
+}
+
 function eventDate(e: GEvent): string {
   const raw = e.start.dateTime ?? e.start.date ?? "";
   return raw.slice(0, 10);
@@ -63,8 +78,11 @@ export default function AgendaPage() {
 
   const [form, setForm] = useState({
     summary: "", date: "", timeStart: "", timeEnd: "", description: "", colorId: "9",
+    clientId: "", clientName: "",
   });
   const [saving, setSaving] = useState(false);
+  const [alunos, setAlunos] = useState<AlunoOption[]>([]);
+  const [creatingFollowup, setCreatingFollowup] = useState<string | null>(null);
 
   // ── Google connection status ──
   useEffect(() => {
@@ -72,6 +90,14 @@ export default function AgendaPage() {
       .then(r => r.json())
       .then(d => { setConnected(d.connected); if (d.authUrl) setAuthUrl(d.authUrl); })
       .catch(() => setConnected(false));
+  }, []);
+
+  // ── Carregar alunos para o picker ──
+  useEffect(() => {
+    fetch("/api/alunos")
+      .then(r => r.json())
+      .then(data => setAlunos(Array.isArray(data) ? data.map((a: AlunoOption) => ({ id: a.id, name: a.name })) : []))
+      .catch(() => {});
   }, []);
 
   // ── Handle OAuth redirect result ──
@@ -121,21 +147,48 @@ export default function AgendaPage() {
     const startDT  = form.timeStart ? `${dateBase}T${form.timeStart}:00` : `${dateBase}T09:00:00`;
     const endDT    = form.timeEnd   ? `${dateBase}T${form.timeEnd}:00`   : `${dateBase}T10:00:00`;
 
+    // Incluir vínculo de aluno na description (parseável depois)
+    const clientTag = form.clientId ? `[FGT:${form.clientId}:${form.clientName}]` : "";
+    const fullDesc = clientTag
+      ? `${clientTag}${form.description ? "\n" + form.description : ""}`
+      : form.description;
+
     const res = await fetch("/api/agenda/eventos", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ summary: form.summary, description: form.description, start: startDT, end: endDT, colorId: form.colorId }),
+      body: JSON.stringify({ summary: form.summary, description: fullDesc, start: startDT, end: endDT, colorId: form.colorId }),
     });
     if (res.ok) {
       const created = await res.json();
       setEvents(prev => [...prev, created]);
       setShowForm(false);
-      setForm({ summary:"", date:"", timeStart:"", timeEnd:"", description:"", colorId:"9" });
+      setForm({ summary:"", date:"", timeStart:"", timeEnd:"", description:"", colorId:"9", clientId:"", clientName:"" });
       setNotification({ type: "success", msg: "Evento criado no Google Calendar!" });
     } else {
       setNotification({ type: "error", msg: "Erro ao criar evento." });
     }
     setSaving(false);
+  }
+
+  // ── Follow-up task from event ──
+  async function handleCreateFollowup(ev: GEvent) {
+    setCreatingFollowup(ev.id);
+    const client = extractClient(ev);
+    const taskTitle = `Follow-up: ${ev.summary}`;
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    await fetch("/api/tarefas", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: taskTitle,
+        type: client ? "student" : "general",
+        clientId: client?.id || null,
+        dueDate: tomorrow.toISOString().slice(0, 10),
+        source: "automatic",
+      }),
+    });
+    setCreatingFollowup(null);
+    setNotification({ type: "success", msg: `Tarefa de follow-up criada: ${taskTitle}` });
   }
 
   // ── Delete event ──
@@ -281,34 +334,50 @@ export default function AgendaPage() {
             <div className="space-y-2">
               {selectedEvents
                 .sort((a,b) => (a.start.dateTime??"").localeCompare(b.start.dateTime??""))
-                .map(ev => (
-                <div key={ev.id} className="group flex items-start gap-2.5 p-2.5 rounded-xl bg-gray-50 hover:bg-gray-100 transition-colors">
-                  <div className="w-2.5 h-2.5 rounded-full mt-1 shrink-0" style={{background: eventColor(ev)}}/>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-semibold text-gray-800 leading-snug">{ev.summary}</p>
-                    {eventTime(ev) && (
-                      <div className="flex items-center gap-1 text-xs text-gray-400 mt-0.5">
-                        <Clock className="w-3 h-3"/> {eventTime(ev)}
-                      </div>
-                    )}
-                    {ev.description && (
-                      <p className="text-xs text-gray-400 mt-0.5 truncate">{ev.description}</p>
-                    )}
-                    <div className="flex items-center gap-2 mt-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                      {ev.htmlLink && (
-                        <a href={ev.htmlLink} target="_blank" rel="noopener noreferrer"
-                          className="text-[10px] text-indigo-600 flex items-center gap-0.5 hover:underline">
-                          <ExternalLink className="w-3 h-3"/> Abrir no Google
-                        </a>
+                .map(ev => {
+                  const linkedClient = extractClient(ev);
+                  const cleanDesc = cleanDescription(ev.description);
+                  return (
+                  <div key={ev.id} className="group flex items-start gap-2.5 p-2.5 rounded-xl bg-gray-50 hover:bg-gray-100 transition-colors">
+                    <div className="w-2.5 h-2.5 rounded-full mt-1 shrink-0" style={{background: eventColor(ev)}}/>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-gray-800 leading-snug">{ev.summary}</p>
+                      {eventTime(ev) && (
+                        <div className="flex items-center gap-1 text-xs text-gray-400 mt-0.5">
+                          <Clock className="w-3 h-3"/> {eventTime(ev)}
+                        </div>
                       )}
-                      <button onClick={() => handleDelete(ev.id)}
-                        className="text-[10px] text-red-400 flex items-center gap-0.5 hover:underline ml-auto">
-                        <Trash2 className="w-3 h-3"/> Excluir
-                      </button>
+                      {linkedClient && (
+                        <Link href={`/alunos?open=${linkedClient.id}`}
+                          className="flex items-center gap-1 text-[10px] text-indigo-600 bg-indigo-50 rounded-full px-2 py-0.5 mt-1 hover:bg-indigo-100 transition-colors w-fit">
+                          <Users className="w-2.5 h-2.5"/>{linkedClient.name}
+                        </Link>
+                      )}
+                      {cleanDesc && (
+                        <p className="text-xs text-gray-400 mt-0.5 truncate">{cleanDesc}</p>
+                      )}
+                      <div className="flex items-center gap-2 mt-1.5 opacity-0 group-hover:opacity-100 transition-opacity flex-wrap">
+                        <button onClick={() => handleCreateFollowup(ev)}
+                          disabled={creatingFollowup === ev.id}
+                          className="text-[10px] text-green-600 flex items-center gap-0.5 hover:underline disabled:opacity-50">
+                          <ListChecks className="w-3 h-3"/>
+                          {creatingFollowup === ev.id ? "Criando..." : "Follow-up"}
+                        </button>
+                        {ev.htmlLink && (
+                          <a href={ev.htmlLink} target="_blank" rel="noopener noreferrer"
+                            className="text-[10px] text-indigo-600 flex items-center gap-0.5 hover:underline">
+                            <ExternalLink className="w-3 h-3"/> Google
+                          </a>
+                        )}
+                        <button onClick={() => handleDelete(ev.id)}
+                          className="text-[10px] text-red-400 flex items-center gap-0.5 hover:underline ml-auto">
+                          <Trash2 className="w-3 h-3"/> Excluir
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                  );
+                })}
             </div>
           </div>
 
@@ -379,6 +448,18 @@ export default function AgendaPage() {
                     className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-400"/>
                 </div>
               </div>
+              {alunos.length > 0 && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Vincular a aluno/lead</label>
+                  <select value={form.clientId} onChange={e => {
+                    const opt = alunos.find(a => a.id === e.target.value);
+                    setForm(f => ({ ...f, clientId: e.target.value, clientName: opt?.name ?? "" }));
+                  }} className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 text-gray-700">
+                    <option value="">— Nenhum —</option>
+                    {alunos.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  </select>
+                </div>
+              )}
               <div>
                 <label className="block text-xs font-semibold text-gray-600 mb-1">Descrição</label>
                 <textarea rows={2} value={form.description} onChange={e => setForm(f=>({...f,description:e.target.value}))}

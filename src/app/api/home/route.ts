@@ -61,7 +61,7 @@ export async function GET() {
     // Alunos ativos
     prisma.client.count({ where: { userId: user.id, status: "ativo" } }),
 
-    // Parcelas vencidas (não pagas, dueDate < hoje)
+    // Parcelas vencidas (não pagas, dueDate < hoje) — sem take para cálculo correto do total
     prisma.installment.findMany({
       where: {
         status: { not: "pago" },
@@ -78,7 +78,6 @@ export async function GET() {
         },
       },
       orderBy: { dueDate: "asc" },
-      take: 10,
     }),
 
     // Parcelas vencendo hoje

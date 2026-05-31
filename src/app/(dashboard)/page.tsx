@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   CheckSquare, DollarSign, Users, AlertTriangle, Loader2, Check,
   ArrowRight, Calendar, Clock, ChevronRight, Zap, Star,
-  TrendingUp, FolderKanban, Bot, TrendingDown, UserX,
+  TrendingUp, FolderKanban, Bot, TrendingDown, UserX, RefreshCw,
 } from "lucide-react";
 import { formatDate, formatCurrency } from "@/lib/utils";
 
@@ -209,15 +209,13 @@ function PaymentRow({
         <span className={`text-sm font-semibold ${amountClass}`}>
           {formatCurrency(payment.amount)}
         </span>
-        {variant !== "week" && (
-          <button
-            onClick={() => onMarkPaid(payment)}
-            disabled={paying}
-            className={`text-xs text-white rounded-lg px-2 py-1 transition-colors disabled:opacity-50 ${btnClass}`}
-          >
-            {paying ? "..." : "Pago"}
-          </button>
-        )}
+        <button
+          onClick={() => onMarkPaid(payment)}
+          disabled={paying}
+          className={`text-xs text-white rounded-lg px-2 py-1 transition-colors disabled:opacity-50 ${btnClass}`}
+        >
+          {paying ? "..." : "Pago"}
+        </button>
       </div>
     </div>
   );
@@ -299,11 +297,21 @@ export default function HomePage() {
   return (
     <div className="p-6 max-w-5xl mx-auto">
       {/* ── Header ─────────────────────────────────────────────── */}
-      <div className="mb-5">
-        <h1 className="text-2xl font-bold text-gray-900">
-          {greeting()}, Fernando 👋
-        </h1>
-        <p className="text-gray-400 text-sm mt-1 capitalize">{todayLabel()}</p>
+      <div className="flex items-start justify-between mb-5">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">
+            {greeting()}, Fernando 👋
+          </h1>
+          <p className="text-gray-400 text-sm mt-1 capitalize">{todayLabel()}</p>
+        </div>
+        <button
+          onClick={load}
+          disabled={loading}
+          title="Atualizar"
+          className="mt-1 p-2 rounded-xl border border-gray-200 text-gray-400 hover:bg-gray-50 disabled:opacity-40 transition-colors"
+        >
+          <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+        </button>
       </div>
 
       {loading ? (
@@ -494,7 +502,7 @@ export default function HomePage() {
                     {summary?.studentsAttention.map((s) => (
                       <Link
                         key={s.id}
-                        href={`/alunos`}
+                        href={`/alunos?open=${s.id}`}
                         className="flex items-center justify-between px-2 py-2 rounded-xl hover:bg-orange-50 transition-colors"
                       >
                         <div className="flex-1 min-w-0">

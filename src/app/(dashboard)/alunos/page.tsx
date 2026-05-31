@@ -936,6 +936,7 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
   const [editando, setEditando] = useState(false);
   const [form, setForm] = useState({
     name: aluno.name, email: aluno.email || "", phone: aluno.phone || "",
+    cpf: aluno.cpf || "",
     status: aluno.status, source: aluno.source || "", planName: aluno.planName || "",
     planDetails: aluno.planDetails || "", paymentMethod: aluno.paymentMethod || "Pix",
     negotiationNotes: aluno.negotiationNotes || "", notes: aluno.notes || "",
@@ -1006,14 +1007,23 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
   const nextAction = nextRecommendedAction();
 
   async function handleSave() {
+    if (!form.name.trim()) return;
     setSaving(true);
-    const res = await fetch(`/api/alunos/${aluno.id}`, {
-      method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form),
-    });
-    onUpdate(await res.json());
-    setSaving(false);
-    setEditando(false);
+    try {
+      const res = await fetch(`/api/alunos/${aluno.id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      const updated = await res.json();
+      if (updated.id) {
+        onUpdate(updated);
+        setEditando(false);
+      } else {
+        alert("Erro ao salvar: " + (updated.error || "tente novamente"));
+      }
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function patchInstallment(saleId: string, instId: string, patch: Record<string, unknown>) {
@@ -1176,53 +1186,86 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
           <div className="px-5 py-4">
             <div className="flex items-center justify-between mb-3">
               <span className="text-[11px] font-bold text-gray-400 uppercase">Informações</span>
-              <button onClick={() => setEditando(!editando)} className="text-xs text-indigo-600 flex items-center gap-1 hover:underline">
-                <Edit2 className="w-3 h-3" /> {editando ? "Cancelar" : "Editar"}
+              <button onClick={() => setEditando(!editando)} className="text-xs font-medium text-indigo-600 flex items-center gap-1 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition-colors">
+                <Edit2 className="w-3 h-3" /> {editando ? "Cancelar edição" : "Editar dados"}
               </button>
             </div>
 
             {editando ? (
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
-                  <input value={form.name} onChange={e => set("name", e.target.value)} placeholder="Nome" className={inputCls} />
+                  <label className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Nome *</label>
+                  <input value={form.name} onChange={e => set("name", e.target.value)} placeholder="Nome completo" className={inputCls} />
                 </div>
-                <input value={form.phone} onChange={e => set("phone", formatPhone(e.target.value))} placeholder="(XX) XXXXX-XXXX" maxLength={15} className={inputCls} />
-                <select value={form.status} onChange={e => set("status", e.target.value)} className={inputCls}>
-                  {STATUS_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-                </select>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Telefone</label>
+                  <input value={form.phone} onChange={e => set("phone", formatPhone(e.target.value))} placeholder="(XX) XXXXX-XXXX" maxLength={15} className={inputCls} />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Status</label>
+                  <select value={form.status} onChange={e => set("status", e.target.value)} className={inputCls}>
+                    {STATUS_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                  </select>
+                </div>
                 <div className="col-span-2">
-                  <input value={form.email} onChange={e => set("email", e.target.value)} placeholder="Email" className={inputCls} />
+                  <label className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Email</label>
+                  <input value={form.email} onChange={e => set("email", e.target.value)} placeholder="email@exemplo.com" className={inputCls} />
                 </div>
-                <select value={form.planName} onChange={e => set("planName", e.target.value)} className={inputCls}>
-                  <option value="">Plano...</option>
-                  {plans.filter(p => p.active).map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
-                  {SPECIAL_PLAN_OPTIONS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-                </select>
-                <select value={form.paymentMethod} onChange={e => set("paymentMethod", e.target.value)} className={inputCls}>
-                  {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
-                {SPECIAL_PLAN_OPTIONS.some(p => p.value === form.planName) && (
-                  <div className="col-span-2 p-3 bg-indigo-50 border border-indigo-200 rounded-xl">
-                    <p className="text-xs font-bold text-indigo-600 mb-1.5">
-                      {form.planName === "Parceria/Collab" ? "Descreva a parceria / collab" : "Descreva o plano personalizado"}
-                    </p>
-                    <textarea rows={2} value={form.planDetails} onChange={e => set("planDetails", e.target.value)}
-                      placeholder={form.planName === "Parceria/Collab" ? "Ex: 3 meses grátis em troca de divulgação..." : "Ex: 2x por semana online + 1x presencial..."}
-                      className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white resize-none" />
-                  </div>
-                )}
-                <select value={form.source} onChange={e => set("source", e.target.value)} className={`${inputCls} col-span-2`}>
-                  <option value="">Funil...</option>
-                  {FUNIL_OPTIONS.map(f => <option key={f} value={f}>{f}</option>)}
-                </select>
-                <textarea rows={2} value={form.negotiationNotes} onChange={e => set("negotiationNotes", e.target.value)}
-                  placeholder="Negociação..." className={`${inputCls} resize-none col-span-2`} />
-                <textarea rows={3} value={form.notes} onChange={e => set("notes", e.target.value)}
-                  placeholder="Observações..." className={`${inputCls} resize-none col-span-2`} />
-                <button onClick={handleSave} disabled={saving}
-                  className="col-span-2 py-2 rounded-xl text-sm font-semibold text-white flex items-center justify-center gap-1 disabled:opacity-50" style={{ background: "#6366f1" }}>
-                  <Save className="w-3.5 h-3.5" /> {saving ? "Salvando..." : "Salvar"}
-                </button>
+                <div className="col-span-2">
+                  <label className="text-[10px] font-bold text-gray-400 uppercase block mb-1">CPF</label>
+                  <input value={form.cpf} onChange={e => set("cpf", e.target.value)} placeholder="000.000.000-00" maxLength={14} className={inputCls} />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Plano / Produto</label>
+                  <input value={form.planName} onChange={e => set("planName", e.target.value)} placeholder="Nome do plano ou produto" className={inputCls} />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Detalhes do plano</label>
+                  <textarea rows={2} value={form.planDetails} onChange={e => set("planDetails", e.target.value)}
+                    placeholder="Descrição do plano, produto ou serviço contratado..."
+                    className={`${inputCls} resize-none`} />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Forma de pagamento</label>
+                  <select value={form.paymentMethod} onChange={e => set("paymentMethod", e.target.value)} className={inputCls}>
+                    {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Origem</label>
+                  {aluno.source === "checkout_infinitepay" ? (
+                    <div className="flex items-center gap-1.5 px-3 py-2 border border-blue-200 rounded-lg bg-blue-50 h-[38px]">
+                      <span className="text-xs text-blue-600 font-medium">Checkout InfinitePay</span>
+                    </div>
+                  ) : (
+                    <select value={form.source} onChange={e => set("source", e.target.value)} className={inputCls}>
+                      <option value="">Funil...</option>
+                      {FUNIL_OPTIONS.map(f => <option key={f} value={f}>{f}</option>)}
+                    </select>
+                  )}
+                </div>
+                <div className="col-span-2">
+                  <label className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Negociação</label>
+                  <textarea rows={2} value={form.negotiationNotes} onChange={e => set("negotiationNotes", e.target.value)}
+                    placeholder="Notas de negociação..." className={`${inputCls} resize-none`} />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Observações</label>
+                  <textarea rows={3} value={form.notes} onChange={e => set("notes", e.target.value)}
+                    placeholder="Observações internas..." className={`${inputCls} resize-none`} />
+                </div>
+                <div className="col-span-2 flex gap-2">
+                  <button onClick={() => setEditando(false)}
+                    className="flex-1 py-2 rounded-xl text-sm font-semibold text-gray-600 border border-gray-200 hover:bg-gray-50 transition-colors">
+                    Cancelar
+                  </button>
+                  <button onClick={handleSave} disabled={saving || !form.name.trim()}
+                    className="flex-1 py-2 rounded-xl text-sm font-semibold text-white flex items-center justify-center gap-1 disabled:opacity-50 transition-colors" style={{ background: "#6366f1" }}>
+                    {saving
+                      ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Salvando...</>
+                      : <><Save className="w-3.5 h-3.5" /> Salvar</>}
+                  </button>
+                </div>
               </div>
             ) : (
               <>

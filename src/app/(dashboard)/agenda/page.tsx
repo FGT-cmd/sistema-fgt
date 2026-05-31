@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   ChevronLeft, ChevronRight, Plus, Clock, Calendar, ExternalLink,
-  RefreshCw, Trash2, X, CheckCircle2, AlertCircle, Users, ListChecks,
+  RefreshCw, Trash2, X, CheckCircle2, AlertCircle, Users, ListChecks, LogOut,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -81,6 +81,7 @@ export default function AgendaPage() {
     clientId: "", clientName: "",
   });
   const [saving, setSaving] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
   const [alunos, setAlunos] = useState<AlunoOption[]>([]);
   const [creatingFollowup, setCreatingFollowup] = useState<string | null>(null);
 
@@ -191,6 +192,24 @@ export default function AgendaPage() {
     setNotification({ type: "success", msg: `Tarefa de follow-up criada: ${taskTitle}` });
   }
 
+  // ── Disconnect Google Calendar ──
+  async function handleDisconnect() {
+    if (!confirm("Tem certeza que deseja desconectar esta conta Google Calendar?")) return;
+    setDisconnecting(true);
+    const res = await fetch("/api/agenda/google/disconnect", { method: "POST" });
+    if (res.ok) {
+      setConnected(false);
+      setEvents([]);
+      setSelected(null);
+      setNotification({ type: "success", msg: "Google Calendar desconectado com sucesso." });
+      const r = await fetch("/api/agenda/google").then(x => x.json());
+      if (r.authUrl) setAuthUrl(r.authUrl);
+    } else {
+      setNotification({ type: "error", msg: "Erro ao desconectar Google Calendar." });
+    }
+    setDisconnecting(false);
+  }
+
   // ── Delete event ──
   async function handleDelete(eventId: string) {
     if (!confirm("Excluir este evento do Google Calendar?")) return;
@@ -242,15 +261,20 @@ export default function AgendaPage() {
             </a>
           )}
           {connected === true && (
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-green-50 border border-green-200">
-              <div className="w-2 h-2 rounded-full bg-green-500"/>
-              <span className="text-xs font-semibold text-green-700">Google Calendar</span>
-            </div>
-          )}
-          {connected && (
-            <button onClick={loadEvents} className="p-2 rounded-xl border border-gray-200 hover:bg-gray-50 text-gray-400">
-              <RefreshCw className="w-4 h-4"/>
-            </button>
+            <>
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-green-50 border border-green-200">
+                <div className="w-2 h-2 rounded-full bg-green-500"/>
+                <span className="text-xs font-semibold text-green-700">Google Calendar conectado</span>
+              </div>
+              <button onClick={loadEvents} className="p-2 rounded-xl border border-gray-200 hover:bg-gray-50 text-gray-400" title="Atualizar eventos">
+                <RefreshCw className="w-4 h-4"/>
+              </button>
+              <button onClick={handleDisconnect} disabled={disconnecting}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium text-red-600 border border-red-200 hover:bg-red-50 disabled:opacity-50 transition-colors">
+                <LogOut className="w-4 h-4"/>
+                {disconnecting ? "Desconectando..." : "Desconectar"}
+              </button>
+            </>
           )}
           <button onClick={() => { setShowForm(true); setForm(f => ({ ...f, date: selected ?? new Date().toISOString().slice(0,10) })); }}
             disabled={!connected}

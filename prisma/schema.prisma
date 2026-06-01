@@ -558,20 +558,23 @@ model FollowUpLog {
 }
 
 // Tarefas standalone (V1 core)
-// status: pending | done
-// type: general | student | financial | content | administrative
+// status: pending | in_progress | waiting | done | cancelled
+// type: general | student | financial | content | commercial | administrative | operational | fiscal | agenda | project
 // source: manual | whatsapp | automatic
+// priority: alta | media | baixa
 model TodoTask {
   id          String    @id @default(cuid())
   title       String
   description String?
   dueDate     DateTime?
   status      String    @default("pending")
+  priority    String    @default("media")
   type        String    @default("general")
   source      String    @default("manual")
   position    Int       @default(0)
   urgent      Boolean?
   important   Boolean?
+  completedAt DateTime?
   clientId    String?
   userId      String
   createdAt   DateTime  @default(now())

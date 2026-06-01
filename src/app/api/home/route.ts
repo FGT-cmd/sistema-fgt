@@ -30,7 +30,7 @@ export async function GET() {
     prisma.todoTask.findMany({
       where: {
         userId: user.id,
-        status: { not: "done" },
+        status: { notIn: ["done", "cancelled"] },
         dueDate: { gte: todayStart, lte: todayEnd },
       },
       include: { client: { select: { id: true, name: true } } },
@@ -41,7 +41,7 @@ export async function GET() {
     prisma.todoTask.findMany({
       where: {
         userId: user.id,
-        status: { not: "done" },
+        status: { notIn: ["done", "cancelled"] },
         dueDate: { lt: todayStart },
       },
       include: { client: { select: { id: true, name: true } } },
@@ -53,7 +53,7 @@ export async function GET() {
     prisma.todoTask.count({
       where: {
         userId: user.id,
-        status: { not: "done" },
+        status: { notIn: ["done", "cancelled"] },
         dueDate: { lt: todayStart },
       },
     }),
@@ -134,7 +134,7 @@ export async function GET() {
     prisma.todoTask.findMany({
       where: {
         userId: user.id,
-        status: { not: "done" },
+        status: { notIn: ["done", "cancelled"] },
         AND: [
           { OR: [{ urgent: true }, { important: true }] },
           { OR: [{ dueDate: null }, { dueDate: { gt: todayEnd } }] },

@@ -67,6 +67,7 @@ type GoalData = {
   id?: string; month: number; year: number;
   revenueGoal: number; newClientsGoal: number; leadsGoal: number; conversionGoal: number;
   averageTicketGoal: number; closingRateGoal: number; qualificationRateGoal: number;
+  weeksPerMonth: number; businessDaysPerWeek: number;
   notes: string; items: GoalItemData[];
 };
 type ResultData = { revenue: number; leadsCount: number; conversionRate: number; newClients: number };
@@ -771,16 +772,43 @@ function DashboardTab() {
 
 // ─── MetasTab ─────────────────────────────────────────────────────────────────
 
+const EMPTY_GOAL = (m: number, y: number): GoalData => ({
+  month: m, year: y,
+  revenueGoal: 0, newClientsGoal: 0, leadsGoal: 0, conversionGoal: 0,
+  averageTicketGoal: 0, closingRateGoal: 0, qualificationRateGoal: 0,
+  weeksPerMonth: 4, businessDaysPerWeek: 5,
+  notes: "", items: [],
+});
+
+function calcBreakdown(goal: GoalData) {
+  const { revenueGoal, averageTicketGoal, closingRateGoal, weeksPerMonth, businessDaysPerWeek } = goal;
+  if (revenueGoal <= 0 || averageTicketGoal <= 0 || closingRateGoal <= 0) return null;
+  const rate = closingRateGoal / 100;
+  const weeks = weeksPerMonth > 0 ? weeksPerMonth : 4;
+  const days  = businessDaysPerWeek > 0 ? businessDaysPerWeek : 5;
+
+  const salesNeeded                 = revenueGoal / averageTicketGoal;
+  const monthlyConversationsNeeded  = salesNeeded / rate;
+  const weeklyConversationsNeeded   = monthlyConversationsNeeded / weeks;
+  const dailyConversationsNeeded    = weeklyConversationsNeeded / days;
+
+  return {
+    salesNeeded,
+    monthlyConversationsNeeded,
+    weeklyConversationsNeeded,
+    dailyConversationsNeeded,
+    salesNeededRounded:                Math.ceil(salesNeeded),
+    monthlyConversationsRounded:       Math.ceil(monthlyConversationsNeeded),
+    weeklyConversationsRounded:        Math.ceil(weeklyConversationsNeeded),
+    dailyConversationsRounded:         Math.ceil(dailyConversationsNeeded),
+  };
+}
+
 function MetasTab() {
   const now = new Date();
   const [month,   setMonth]   = useState(now.getMonth() + 1);
   const [year,    setYear]    = useState(now.getFullYear());
-  const [goal,    setGoal]    = useState<GoalData>({
-    month, year,
-    revenueGoal: 0, newClientsGoal: 0, leadsGoal: 0, conversionGoal: 0,
-    averageTicketGoal: 0, closingRateGoal: 0, qualificationRateGoal: 0,
-    notes: "", items: [],
-  });
+  const [goal,    setGoal]    = useState<GoalData>(EMPTY_GOAL(now.getMonth() + 1, now.getFullYear()));
   const [results, setResults] = useState<ResultData | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving,  setSaving]  = useState(false);
@@ -792,12 +820,7 @@ function MetasTab() {
       fetch(`/api/crm/metas?month=${m}&year=${y}`).then((r) => r.ok ? r.json() : null).catch(() => null),
       fetch(`/api/crm/metas/resultados?month=${m}&year=${y}`).then((r) => r.ok ? r.json() : null).catch(() => null),
     ]);
-    setGoal(goalRes ?? {
-      month: m, year: y,
-      revenueGoal: 0, newClientsGoal: 0, leadsGoal: 0, conversionGoal: 0,
-      averageTicketGoal: 0, closingRateGoal: 0, qualificationRateGoal: 0,
-      notes: "", items: [],
-    });
+    setGoal(goalRes ? { ...EMPTY_GOAL(m, y), ...goalRes } : EMPTY_GOAL(m, y));
     setResults(resRes);
     setLoading(false);
   }, []);
@@ -822,7 +845,7 @@ function MetasTab() {
       });
       if (res.ok) {
         const updated = await res.json();
-        setGoal(updated);
+        setGoal({ ...EMPTY_GOAL(month, year), ...updated });
         setSaved(true);
         setTimeout(() => setSaved(false), 2000);
       }
@@ -830,7 +853,8 @@ function MetasTab() {
     setSaving(false);
   };
 
-  const itemsTotal = goal.items.reduce((s, it) => s + (it.quantity * it.unitPrice), 0);
+  const itemsTotal  = goal.items.reduce((s, it) => s + (it.quantity * it.unitPrice), 0);
+  const breakdown   = calcBreakdown(goal);
 
   if (loading) return (
     <div className="flex-1 flex items-center justify-center">
@@ -868,15 +892,152 @@ function MetasTab() {
         {/* Coluna esquerda: definição */}
         <div className="space-y-5">
 
-          {/* Metas de volume */}
+          {/* Inputs principais da meta */}
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-            <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">Metas de Volume</h3>
+            <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">Parâmetros da Meta</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="col-span-2">
+                <label className="text-xs text-gray-500 mb-1 block">Meta mensal de faturamento (R$)</label>
+                <input
+                  type="number"
+                  value={goal.revenueGoal || ""}
+                  onChange={(e) => setGoal((g) => ({ ...g, revenueGoal: parseFloat(e.target.value) || 0 }))}
+                  placeholder="Ex: 30000"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-400 font-medium"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500 mb-1 block">Ticket do produto (R$)</label>
+                <input
+                  type="number"
+                  value={goal.averageTicketGoal || ""}
+                  onChange={(e) => setGoal((g) => ({ ...g, averageTicketGoal: parseFloat(e.target.value) || 0 }))}
+                  placeholder="Ex: 2400"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-400 font-medium"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500 mb-1 block">Taxa de conversão (%)</label>
+                <input
+                  type="number"
+                  value={goal.closingRateGoal || ""}
+                  onChange={(e) => setGoal((g) => ({ ...g, closingRateGoal: parseFloat(e.target.value) || 0 }))}
+                  placeholder="Ex: 30"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-400 font-medium"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500 mb-1 block">Semanas comerciais/mês</label>
+                <input
+                  type="number"
+                  value={goal.weeksPerMonth || ""}
+                  onChange={(e) => setGoal((g) => ({ ...g, weeksPerMonth: parseInt(e.target.value) || 4 }))}
+                  placeholder="4"
+                  min={1} max={6}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-400 font-medium"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500 mb-1 block">Dias úteis/semana</label>
+                <input
+                  type="number"
+                  value={goal.businessDaysPerWeek || ""}
+                  onChange={(e) => setGoal((g) => ({ ...g, businessDaysPerWeek: parseInt(e.target.value) || 5 }))}
+                  placeholder="5"
+                  min={1} max={7}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-400 font-medium"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Desdobramento operacional */}
+          {breakdown ? (
+            <div className="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-2xl border border-indigo-100 shadow-sm p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <Target className="w-4 h-4 text-indigo-600" />
+                <h3 className="text-sm font-semibold text-indigo-800 uppercase tracking-wide">Desdobramento Operacional</h3>
+              </div>
+
+              {/* Cabeçalho da tabela */}
+              <div className="grid grid-cols-3 gap-2 text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2 px-1">
+                <span>Métrica</span>
+                <span className="text-center">Exato</span>
+                <span className="text-center">Operacional ↑</span>
+              </div>
+
+              <div className="space-y-1">
+                {[
+                  {
+                    label: "Vendas necessárias / mês",
+                    exact: breakdown.salesNeeded,
+                    rounded: breakdown.salesNeededRounded,
+                    color: "#6366f1",
+                    bg: "#eef2ff",
+                    decimals: 1,
+                    suffix: "",
+                  },
+                  {
+                    label: "Conversas necessárias / mês",
+                    exact: breakdown.monthlyConversationsNeeded,
+                    rounded: breakdown.monthlyConversationsRounded,
+                    color: "#8b5cf6",
+                    bg: "#f5f3ff",
+                    decimals: 1,
+                    suffix: "",
+                  },
+                  {
+                    label: "Conversas / semana",
+                    exact: breakdown.weeklyConversationsNeeded,
+                    rounded: breakdown.weeklyConversationsRounded,
+                    color: "#3b82f6",
+                    bg: "#eff6ff",
+                    decimals: 2,
+                    suffix: "",
+                  },
+                  {
+                    label: "Conversas / dia",
+                    exact: breakdown.dailyConversationsNeeded,
+                    rounded: breakdown.dailyConversationsRounded,
+                    color: "#10b981",
+                    bg: "#f0fdf4",
+                    decimals: 2,
+                    suffix: "",
+                  },
+                ].map((row) => (
+                  <div key={row.label} className="grid grid-cols-3 gap-2 items-center rounded-xl px-3 py-2.5" style={{ background: row.bg }}>
+                    <span className="text-xs text-gray-600 font-medium leading-tight">{row.label}</span>
+                    <span className="text-sm text-gray-500 text-center tabular-nums">
+                      {row.exact.toFixed(row.decimals)}{row.suffix}
+                    </span>
+                    <span className="text-base font-bold text-center tabular-nums" style={{ color: row.color }}>
+                      {row.rounded}{row.suffix}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-3 pt-3 border-t border-indigo-100 text-xs text-indigo-500 text-center">
+                {formatCurrency(goal.revenueGoal)} ÷ {formatCurrency(goal.averageTicketGoal)} × {goal.closingRateGoal}% conversão
+                &nbsp;·&nbsp;{goal.weeksPerMonth} sem/mês · {goal.businessDaysPerWeek} dias/sem
+              </div>
+            </div>
+          ) : (
+            <div className="bg-gray-50 rounded-2xl border border-dashed border-gray-200 p-5 text-center">
+              <Target className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+              <p className="text-sm text-gray-400">Preencha a meta mensal, o ticket do produto e a taxa de conversão para ver o desdobramento operacional.</p>
+            </div>
+          )}
+
+          {/* Outras metas de volume */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+            <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">Outras Metas</h3>
             <div className="grid grid-cols-2 gap-4">
               {[
-                { label: "Faturamento (R$)", field: "revenueGoal" as keyof GoalData, type: "float", placeholder: "0,00" },
-                { label: "Novos Alunos",     field: "newClientsGoal" as keyof GoalData, type: "int", placeholder: "0" },
-                { label: "Leads",            field: "leadsGoal" as keyof GoalData, type: "int", placeholder: "0" },
-                { label: "Conversão (%)",    field: "conversionGoal" as keyof GoalData, type: "float", placeholder: "0" },
+                { label: "Novos Alunos",          field: "newClientsGoal" as keyof GoalData, type: "int",   placeholder: "0" },
+                { label: "Leads no mês",           field: "leadsGoal"      as keyof GoalData, type: "int",   placeholder: "0" },
+                { label: "Conversão real alvo (%)", field: "conversionGoal" as keyof GoalData, type: "float", placeholder: "0" },
+                { label: "Taxa de qualificação (%)", field: "qualificationRateGoal" as keyof GoalData, type: "float", placeholder: "0" },
               ].map(({ label, field, type, placeholder }) => (
                 <div key={field}>
                   <label className="text-xs text-gray-500 mb-1 block">{label}</label>
@@ -895,42 +1056,10 @@ function MetasTab() {
             </div>
           </div>
 
-          {/* Parâmetros de desdobramento */}
-          <div className="bg-white rounded-2xl border border-indigo-50 shadow-sm p-5">
-            <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-1">Parâmetros de Desdobramento</h3>
-            <p className="text-xs text-gray-400 mb-4">Usados para calcular quantos leads e oportunidades você precisa</p>
-            <div className="grid grid-cols-2 gap-4">
-              {[
-                { label: "Ticket Médio (R$)",    field: "averageTicketGoal" as keyof GoalData, placeholder: "0,00" },
-                { label: "Taxa de Fechamento (%)", field: "closingRateGoal" as keyof GoalData, placeholder: "0" },
-                { label: "Taxa de Qualificação (%)", field: "qualificationRateGoal" as keyof GoalData, placeholder: "0" },
-              ].map(({ label, field, placeholder }) => (
-                <div key={field}>
-                  <label className="text-xs text-gray-500 mb-1 block">{label}</label>
-                  <input
-                    type="number"
-                    value={(goal[field] as number) || ""}
-                    onChange={(e) => setGoal((g) => ({ ...g, [field]: parseFloat(e.target.value) || 0 }))}
-                    placeholder={placeholder}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-400 font-medium"
-                  />
-                </div>
-              ))}
-              {goal.averageTicketGoal > 0 && goal.revenueGoal > 0 && (
-                <div className="col-span-2 bg-indigo-50 rounded-lg px-3 py-2 text-xs text-indigo-700">
-                  Para faturar {formatCurrency(goal.revenueGoal)} com ticket de {formatCurrency(goal.averageTicketGoal)}:
-                  {" "}<strong>{Math.ceil(goal.revenueGoal / goal.averageTicketGoal)}</strong> fechamentos
-                  {goal.closingRateGoal > 0 && <>, {" "}<strong>{Math.ceil(Math.ceil(goal.revenueGoal / goal.averageTicketGoal) / (goal.closingRateGoal / 100))}</strong> oportunidades</>}
-                  {goal.qualificationRateGoal > 0 && goal.closingRateGoal > 0 && <>, {" "}<strong>{Math.ceil(Math.ceil(Math.ceil(goal.revenueGoal / goal.averageTicketGoal) / (goal.closingRateGoal / 100)) / (goal.qualificationRateGoal / 100))}</strong> leads</>}
-                </div>
-              )}
-            </div>
-          </div>
-
           {/* Desdobramento por produto */}
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Desdobramento</h3>
+              <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Desdobramento por Produto</h3>
               <button onClick={addItem} className="flex items-center gap-1.5 text-xs font-medium text-indigo-600 hover:text-indigo-700 transition-colors">
                 <Plus className="w-3.5 h-3.5" />Adicionar linha
               </button>

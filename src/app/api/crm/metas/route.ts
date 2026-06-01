@@ -29,6 +29,7 @@ export async function PUT(req: NextRequest) {
       month, year,
       revenueGoal, newClientsGoal, leadsGoal, conversionGoal,
       averageTicketGoal, closingRateGoal, qualificationRateGoal,
+      weeksPerMonth, businessDaysPerWeek,
       notes, items,
     } = body;
 
@@ -40,6 +41,8 @@ export async function PUT(req: NextRequest) {
       averageTicketGoal:     averageTicketGoal      ?? 0,
       closingRateGoal:       closingRateGoal        ?? 0,
       qualificationRateGoal: qualificationRateGoal  ?? 0,
+      weeksPerMonth:         weeksPerMonth          ?? 4,
+      businessDaysPerWeek:   businessDaysPerWeek    ?? 5,
       notes:                 notes ?? null,
     };
 

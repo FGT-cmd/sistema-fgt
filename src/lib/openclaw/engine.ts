@@ -297,11 +297,20 @@ export async function processOpenClawMessage(params: {
   let classification: Awaited<ReturnType<typeof classifyOCMessage>>;
   try {
     classification = await classifyOCMessage(message, clientList, today);
-  } catch {
-    await prisma.openClawEvent.create({
-      data: { chatId, source, rawCommand: message, executionStatus: "failed", errorMessage: "Falha na classificação", userId: user.id },
-    });
-    return { response: "Sistema operacional indisponível no momento. Tente novamente em instantes.", intent: "unknown", status: "failed" };
+  } catch (classifyErr) {
+    const errMsg = String(classifyErr);
+    const isRateLimit = /rate.?limit|all models|overloaded|temporarily unavailable/i.test(errMsg);
+    const response = isRateLimit
+      ? "Estou com limite temporário no modelo de IA. Tente novamente em alguns minutos ou use comandos diretos como: resumo do dia, tarefas de hoje, pendências ou quem não pagou."
+      : "Sistema operacional indisponível no momento. Tente novamente em instantes.";
+    try {
+      await prisma.openClawEvent.create({
+        data: { chatId, source, rawCommand: message, executionStatus: "failed", errorMessage: errMsg, response, userId: user.id },
+      });
+    } catch (saveErr) {
+      console.error("[OpenClaw] classifier event save failed:", saveErr);
+    }
+    return { response, intent: "unknown", status: "failed" };
   }
 
   const { intent, data } = classification;
@@ -310,37 +319,45 @@ export async function processOpenClawMessage(params: {
   if (intent === "query_pending") {
     const d = data as OCQueryPendingData;
     let response: string;
+    let pendingStatus: "executed" | "failed" = "executed";
+    let pendingError: string | undefined;
     try {
       response = await opGetPending(user.id, d.queryType || "general");
-      await prisma.openClawEvent.create({
-        data: { chatId, source, rawCommand: message, interpretedIntent: intent, extractedData: data as object, executionStatus: "executed", response, userId: user.id },
-      });
     } catch (err) {
-      const errMsg = String(err);
-      await prisma.openClawEvent.create({
-        data: { chatId, source, rawCommand: message, interpretedIntent: intent, executionStatus: "failed", errorMessage: errMsg, userId: user.id },
-      });
-      return { response: opLayerUserMessage(err), intent, status: "failed" };
+      pendingStatus = "failed";
+      pendingError = String(err);
+      response = opLayerUserMessage(err);
     }
-    return { response, intent, status: "executed" };
+    try {
+      await prisma.openClawEvent.create({
+        data: { chatId, source, rawCommand: message, interpretedIntent: intent, extractedData: data as object, executionStatus: pendingStatus, errorMessage: pendingError, response, userId: user.id },
+      });
+    } catch (saveErr) {
+      console.error("[OpenClaw] query_pending event save failed:", saveErr);
+    }
+    return { response, intent, status: pendingStatus };
   }
 
   if (intent === "query_crm") {
     const d = data as OCQueryCRMData;
     let response: string;
+    let crmStatus: "executed" | "failed" = "executed";
+    let crmError: string | undefined;
     try {
       response = await queryCRM(user.id, d.queryType || "general");
-      await prisma.openClawEvent.create({
-        data: { chatId, source, rawCommand: message, interpretedIntent: intent, extractedData: data as object, executionStatus: "executed", response, userId: user.id },
-      });
     } catch (err) {
-      const errMsg = String(err);
-      await prisma.openClawEvent.create({
-        data: { chatId, source, rawCommand: message, interpretedIntent: intent, executionStatus: "failed", errorMessage: errMsg, userId: user.id },
-      });
-      return { response: "Sistema operacional indisponível. Não foi possível consultar o CRM agora. Tente novamente em instantes.", intent, status: "failed" };
+      crmStatus = "failed";
+      crmError = String(err);
+      response = "Sistema operacional indisponível. Não foi possível consultar o CRM agora. Tente novamente em instantes.";
     }
-    return { response, intent, status: "executed" };
+    try {
+      await prisma.openClawEvent.create({
+        data: { chatId, source, rawCommand: message, interpretedIntent: intent, extractedData: data as object, executionStatus: crmStatus, errorMessage: crmError, response, userId: user.id },
+      });
+    } catch (saveErr) {
+      console.error("[OpenClaw] query_crm event save failed:", saveErr);
+    }
+    return { response, intent, status: crmStatus };
   }
 
   if (intent === "unknown") {

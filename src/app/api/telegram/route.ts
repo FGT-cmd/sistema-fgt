@@ -12,6 +12,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { processOpenClawMessage } from "@/lib/openclaw/engine";
+import { prisma } from "@/lib/prisma";
+import { getDefaultUser } from "@/lib/user";
 
 const BOT_TOKEN     = process.env.TELEGRAM_BOT_TOKEN;
 const ALLOWED_CHAT  = process.env.TELEGRAM_ALLOWED_CHAT;
@@ -64,7 +66,25 @@ export async function POST(req: NextRequest) {
       result = await processOpenClawMessage({ chatId, message: text, source: "telegram" });
     } catch (err) {
       console.error("[POST /api/telegram] Falha no engine:", err);
-      await sendTelegramMessage(chatId, "Sistema operacional indisponível no momento. Tente novamente em instantes.");
+      const fallbackResponse = "Sistema operacional indisponível no momento. Tente novamente em instantes.";
+      // Garante que falhas totais do engine ainda geram um OpenClawEvent
+      try {
+        const user = await getDefaultUser();
+        await prisma.openClawEvent.create({
+          data: {
+            chatId,
+            source: "telegram",
+            rawCommand: text,
+            executionStatus: "failed",
+            errorMessage: String(err),
+            response: fallbackResponse,
+            userId: user.id,
+          },
+        });
+      } catch (saveErr) {
+        console.error("[POST /api/telegram] Fallback event save failed:", saveErr);
+      }
+      await sendTelegramMessage(chatId, fallbackResponse);
       return NextResponse.json({ ok: true });
     }
 
@@ -89,10 +109,7 @@ export async function GET() {
   }
 
   try {
-    const [meRes, { prisma }] = await Promise.all([
-      fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getMe`),
-      import("@/lib/prisma"),
-    ]);
+    const meRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getMe`);
     const me = await meRes.json();
 
     const lastEvent = await prisma.openClawEvent.findFirst({

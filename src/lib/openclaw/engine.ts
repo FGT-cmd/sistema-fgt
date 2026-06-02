@@ -12,6 +12,33 @@
 import { prisma } from "@/lib/prisma";
 import { getDefaultUser } from "@/lib/user";
 import { classifyOCMessage } from "./classifier";
+
+// ─── Upsert helper ────────────────────────────────────────────────
+// If existingId is provided, updates that event; otherwise creates a new one.
+
+type EventData = {
+  chatId: string;
+  source: string;
+  rawCommand: string;
+  interpretedIntent?: string;
+  extractedData?: object;
+  confirmationPayload?: object;
+  executionStatus?: string;
+  response?: string | null;
+  errorMessage?: string | null;
+  userId: string;
+};
+
+async function persistEvent(existingId: string | undefined, data: EventData): Promise<string> {
+  if (existingId) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { userId: _uid, ...updateData } = data;
+    await prisma.openClawEvent.update({ where: { id: existingId }, data: updateData });
+    return existingId;
+  }
+  const ev = await prisma.openClawEvent.create({ data });
+  return ev.id;
+}
 import {
   getOCPendingSession, cancelOCPendingSessions,
   isOCConfirmation, isOCCancellation, updateOCEventStatus,
@@ -204,8 +231,9 @@ export async function processOpenClawMessage(params: {
   chatId: string;
   message: string;
   source?: string;
+  existingEventId?: string;
 }): Promise<OCProcessResult> {
-  const { chatId, message, source = "telegram" } = params;
+  const { chatId, message, source = "telegram", existingEventId } = params;
   const user = await getDefaultUser();
   const today = new Date().toISOString().slice(0, 10);
 
@@ -240,11 +268,9 @@ export async function processOpenClawMessage(params: {
 
   // ── 2. BARREIRA: rejeita pedidos documentais antes de chamar IA ──
   if (isDocumentalRequest(message)) {
-    const evDoc = await prisma.openClawEvent.create({
-      data: { chatId, source, rawCommand: message, interpretedIntent: "unknown", executionStatus: "received", response: DOCUMENTAL_RESPONSE, userId: user.id },
-    });
-    console.log(`[OpenClaw] Event created: id=${evDoc.id} intent=unknown status=received source=${source} chatId=${chatId}`);
-    return { response: DOCUMENTAL_RESPONSE, intent: "unknown", status: "executed", eventId: evDoc.id };
+    const evDocId = await persistEvent(existingEventId, { chatId, source, rawCommand: message, interpretedIntent: "unknown", executionStatus: "received", response: DOCUMENTAL_RESPONSE, userId: user.id });
+    console.log(`[OpenClaw] Event persisted: id=${evDocId} intent=unknown status=received source=${source} chatId=${chatId}`);
+    return { response: DOCUMENTAL_RESPONSE, intent: "unknown", status: "executed", eventId: evDocId };
   }
 
   const checkoutCmd = parseTelegramCheckoutLinkCommand(message);
@@ -256,40 +282,22 @@ export async function processOpenClawMessage(params: {
         amountCents: checkoutCmd.amountCents,
         source: "telegram",
       });
-      const evCo = await prisma.openClawEvent.create({
-        data: {
-          chatId,
-          source,
-          rawCommand: message,
-          interpretedIntent: "checkout_create",
-          extractedData: {
-            productName: checkoutCmd.productName,
-            amountCents: checkoutCmd.amountCents,
-          } as object,
-          executionStatus: "executed",
-          response,
-          userId: user.id,
-        },
+      const evCoId = await persistEvent(existingEventId, {
+        chatId, source, rawCommand: message, interpretedIntent: "checkout_create",
+        extractedData: { productName: checkoutCmd.productName, amountCents: checkoutCmd.amountCents } as object,
+        executionStatus: "executed", response, userId: user.id,
       });
-      console.log(`[OpenClaw] Event created: id=${evCo.id} intent=checkout_create status=executed source=${source} chatId=${chatId}`);
-      return { response, intent: "unknown", status: "executed", eventId: evCo.id };
+      console.log(`[OpenClaw] Event persisted: id=${evCoId} intent=checkout_create status=executed source=${source} chatId=${chatId}`);
+      return { response, intent: "unknown", status: "executed", eventId: evCoId };
     } catch (err) {
       const errMsg = String(err);
       response = opLayerUserMessage(err);
-      const evCoF = await prisma.openClawEvent.create({
-        data: {
-          chatId,
-          source,
-          rawCommand: message,
-          interpretedIntent: "checkout_create",
-          executionStatus: "failed",
-          errorMessage: errMsg,
-          response,
-          userId: user.id,
-        },
+      const evCoFId = await persistEvent(existingEventId, {
+        chatId, source, rawCommand: message, interpretedIntent: "checkout_create",
+        executionStatus: "failed", errorMessage: errMsg, response, userId: user.id,
       });
-      console.log(`[OpenClaw] Event created: id=${evCoF.id} intent=checkout_create status=failed source=${source} chatId=${chatId}`);
-      return { response, intent: "unknown", status: "failed", eventId: evCoF.id };
+      console.log(`[OpenClaw] Event persisted: id=${evCoFId} intent=checkout_create status=failed source=${source} chatId=${chatId}`);
+      return { response, intent: "unknown", status: "failed", eventId: evCoFId };
     }
   }
 
@@ -308,11 +316,8 @@ export async function processOpenClawMessage(params: {
       : "Sistema operacional indisponível no momento. Tente novamente em instantes.";
     let evIdClassErr: string | undefined;
     try {
-      const ev = await prisma.openClawEvent.create({
-        data: { chatId, source, rawCommand: message, executionStatus: "failed", errorMessage: errMsg, response, userId: user.id },
-      });
-      evIdClassErr = ev.id;
-      console.log(`[OpenClaw] Event created: id=${ev.id} status=failed source=${source} chatId=${chatId} (classifier error)`);
+      evIdClassErr = await persistEvent(existingEventId, { chatId, source, rawCommand: message, executionStatus: "failed", errorMessage: errMsg, response, userId: user.id });
+      console.log(`[OpenClaw] Event persisted: id=${evIdClassErr} status=failed source=${source} chatId=${chatId} (classifier error)`);
     } catch (saveErr) {
       console.error("[OpenClaw] classifier event save failed:", saveErr);
     }
@@ -336,11 +341,8 @@ export async function processOpenClawMessage(params: {
     }
     let evIdQP: string | undefined;
     try {
-      const ev = await prisma.openClawEvent.create({
-        data: { chatId, source, rawCommand: message, interpretedIntent: intent, extractedData: data as object, executionStatus: pendingStatus, errorMessage: pendingError, response, userId: user.id },
-      });
-      evIdQP = ev.id;
-      console.log(`[OpenClaw] Event created: id=${ev.id} intent=${intent} status=${pendingStatus} source=${source} chatId=${chatId}`);
+      evIdQP = await persistEvent(existingEventId, { chatId, source, rawCommand: message, interpretedIntent: intent, extractedData: data as object, executionStatus: pendingStatus, errorMessage: pendingError, response, userId: user.id });
+      console.log(`[OpenClaw] Event persisted: id=${evIdQP} intent=${intent} status=${pendingStatus} source=${source} chatId=${chatId}`);
     } catch (saveErr) {
       console.error("[OpenClaw] query_pending event save failed:", saveErr);
     }
@@ -361,11 +363,8 @@ export async function processOpenClawMessage(params: {
     }
     let evIdCRM: string | undefined;
     try {
-      const ev = await prisma.openClawEvent.create({
-        data: { chatId, source, rawCommand: message, interpretedIntent: intent, extractedData: data as object, executionStatus: crmStatus, errorMessage: crmError, response, userId: user.id },
-      });
-      evIdCRM = ev.id;
-      console.log(`[OpenClaw] Event created: id=${ev.id} intent=${intent} status=${crmStatus} source=${source} chatId=${chatId}`);
+      evIdCRM = await persistEvent(existingEventId, { chatId, source, rawCommand: message, interpretedIntent: intent, extractedData: data as object, executionStatus: crmStatus, errorMessage: crmError, response, userId: user.id });
+      console.log(`[OpenClaw] Event persisted: id=${evIdCRM} intent=${intent} status=${crmStatus} source=${source} chatId=${chatId}`);
     } catch (saveErr) {
       console.error("[OpenClaw] query_crm event save failed:", saveErr);
     }
@@ -376,11 +375,8 @@ export async function processOpenClawMessage(params: {
     const response = "Não reconheci esse comando como uma operação do sistema.\n\nPosso executar:\n• *Consultar pendências* — \"quem não pagou?\", \"o que está atrasado?\"\n• *Criar aluna* — \"criar aluna Ana, plano semestral\"\n• *Registrar pagamento* — \"Ana pagou 300 no pix\"\n• *Criar tarefa* — \"me lembra de cobrar Bruna sexta\"\n• *Salvar observação* — \"obs da Ana: relatou fome à noite\"\n• *Salvar ideia* — \"ideia de conteúdo: ...\"\n• *Criar lead* — \"Ana quer contratar, veio pelo Instagram\"";
     let evIdUnk: string | undefined;
     try {
-      const ev = await prisma.openClawEvent.create({
-        data: { chatId, source, rawCommand: message, interpretedIntent: intent, executionStatus: "received", response, userId: user.id },
-      });
-      evIdUnk = ev.id;
-      console.log(`[OpenClaw] Event created: id=${ev.id} intent=unknown status=received source=${source} chatId=${chatId}`);
+      evIdUnk = await persistEvent(existingEventId, { chatId, source, rawCommand: message, interpretedIntent: intent, executionStatus: "received", response, userId: user.id });
+      console.log(`[OpenClaw] Event persisted: id=${evIdUnk} intent=unknown status=received source=${source} chatId=${chatId}`);
     } catch (saveErr) {
       console.error("[OpenClaw] unknown intent event save failed:", saveErr);
     }
@@ -393,11 +389,8 @@ export async function processOpenClawMessage(params: {
   if (!enrichResult.valid) {
     let evIdEnr: string | undefined;
     try {
-      const ev = await prisma.openClawEvent.create({
-        data: { chatId, source, rawCommand: message, interpretedIntent: intent, extractedData: data as object, executionStatus: "failed", response: enrichResult.message, userId: user.id },
-      });
-      evIdEnr = ev.id;
-      console.log(`[OpenClaw] Event created: id=${ev.id} intent=${intent} status=failed source=${source} chatId=${chatId} (enrich invalid)`);
+      evIdEnr = await persistEvent(existingEventId, { chatId, source, rawCommand: message, interpretedIntent: intent, extractedData: data as object, executionStatus: "failed", response: enrichResult.message, userId: user.id });
+      console.log(`[OpenClaw] Event persisted: id=${evIdEnr} intent=${intent} status=failed source=${source} chatId=${chatId} (enrich invalid)`);
     } catch (saveErr) {
       console.error("[OpenClaw] enrich-invalid event save failed:", saveErr);
     }
@@ -410,15 +403,13 @@ export async function processOpenClawMessage(params: {
   const confirmationMsg = warningPrefix + buildConfirmation(intent, data, enrichResult.enriched);
   const confirmationPayload = { intent, data, enriched: enrichResult.enriched };
 
-  const event = await prisma.openClawEvent.create({
-    data: {
-      chatId, source, rawCommand: message,
-      interpretedIntent: intent,
-      extractedData: data as object,
-      confirmationPayload: confirmationPayload as object,
-      executionStatus: "waiting_confirmation",
-      userId: user.id,
-    },
+  const evConfId = await persistEvent(existingEventId, {
+    chatId, source, rawCommand: message,
+    interpretedIntent: intent,
+    extractedData: data as object,
+    confirmationPayload: confirmationPayload as object,
+    executionStatus: "waiting_confirmation",
+    userId: user.id,
   });
 
   return {
@@ -426,6 +417,6 @@ export async function processOpenClawMessage(params: {
     intent,
     status: "waiting_confirmation",
     waitingConfirmation: true,
-    eventId: event.id,
+    eventId: evConfId,
   };
 }

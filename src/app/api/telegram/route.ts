@@ -15,8 +15,8 @@ import { processOpenClawMessage } from "@/lib/openclaw/engine";
 import { prisma } from "@/lib/prisma";
 import { getDefaultUser } from "@/lib/user";
 
-const BOT_TOKEN     = process.env.TELEGRAM_BOT_TOKEN;
-const ALLOWED_CHAT  = process.env.TELEGRAM_ALLOWED_CHAT;
+const BOT_TOKEN    = process.env.TELEGRAM_BOT_TOKEN;
+const ALLOWED_CHAT = process.env.TELEGRAM_ALLOWED_CHAT;
 
 async function sendTelegramMessage(chatId: string, text: string) {
   if (!BOT_TOKEN) {
@@ -27,11 +27,7 @@ async function sendTelegramMessage(chatId: string, text: string) {
     await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text,
-        parse_mode: "Markdown",
-      }),
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: "Markdown" }),
     });
   } catch (err) {
     console.error("[Telegram] Erro ao enviar mensagem:", err);
@@ -42,79 +38,79 @@ export async function POST(req: NextRequest) {
   try {
     const update = await req.json();
 
-    // Suporte a mensagens normais e editadas
     const message = update.message || update.edited_message;
-    if (!message || !message.text) {
+    if (!message?.text) {
       return NextResponse.json({ ok: true });
     }
 
-    const chatId = String(message.chat.id);
+    const chatId   = String(message.chat.id);
     const text: string = message.text;
 
-    // Log para descobrir o chat_id
-    console.log(`[Telegram] Update de chatId=${chatId}: "${text}"`);
+    console.log("[telegram] received", chatId, text);
 
-    // Whitelist: apenas o chat autorizado
+    // ── 1. Criar evento imediatamente ──────────────────────────────
+    const user = await getDefaultUser();
+    const initialEvent = await prisma.openClawEvent.create({
+      data: {
+        chatId,
+        source: "telegram",
+        rawCommand: text,
+        interpretedIntent: "received",
+        executionStatus: "received",
+        response: null,
+        errorMessage: null,
+        userId: user.id,
+      },
+    });
+    const eventId = initialEvent.id;
+    console.log("[telegram] event created", eventId);
+
+    // ── 2. Chat bloqueado ──────────────────────────────────────────
     if (ALLOWED_CHAT && chatId !== ALLOWED_CHAT) {
       console.log(`[Telegram] Chat ${chatId} não autorizado.`);
+      await prisma.openClawEvent.update({
+        where: { id: eventId },
+        data: { executionStatus: "blocked", errorMessage: "Chat não autorizado" },
+      });
       return NextResponse.json({ ok: true });
     }
 
-    // Processa via OpenClaw engine
+    // ── 3. Processar via engine ────────────────────────────────────
     let result;
     try {
-      result = await processOpenClawMessage({ chatId, message: text, source: "telegram" });
+      result = await processOpenClawMessage({ chatId, message: text, source: "telegram", existingEventId: eventId });
       console.log(`[Telegram] Engine result: intent=${result.intent} status=${result.status} eventId=${result.eventId ?? "NONE"}`);
     } catch (err) {
       console.error("[POST /api/telegram] Falha no engine:", err);
       const fallbackResponse = "Sistema operacional indisponível no momento. Tente novamente em instantes.";
-      try {
-        const user = await getDefaultUser();
-        const ev = await prisma.openClawEvent.create({
-          data: {
-            chatId,
-            source: "telegram",
-            rawCommand: text,
-            executionStatus: "failed",
-            errorMessage: String(err),
-            response: fallbackResponse,
-            userId: user.id,
-          },
-        });
-        console.log(`[Telegram] Safety event created (engine crash): id=${ev.id}`);
-      } catch (saveErr) {
-        console.error("[POST /api/telegram] Safety event save failed:", saveErr);
-      }
+      await prisma.openClawEvent.update({
+        where: { id: eventId },
+        data: { executionStatus: "failed", errorMessage: String(err), response: fallbackResponse },
+      });
       await sendTelegramMessage(chatId, fallbackResponse);
       return NextResponse.json({ ok: true });
     }
 
-    // Garante que todo update do Telegram tem pelo menos um OpenClawEvent no banco
-    if (!result.eventId) {
-      console.warn(`[Telegram] Engine returned no eventId for intent=${result.intent} — creating safety event`);
+    // ── 4. Se engine retornou eventId diferente (fluxo confirmação)
+    //       atualizar o evento inicial com o status final.
+    if (result.eventId !== eventId) {
       try {
-        const user = await getDefaultUser();
-        const ev = await prisma.openClawEvent.create({
+        await prisma.openClawEvent.update({
+          where: { id: eventId },
           data: {
-            chatId,
-            source: "telegram",
-            rawCommand: text,
             interpretedIntent: result.intent,
-            executionStatus: result.status === "executed" ? "executed" : result.status === "failed" ? "failed" : "received",
+            executionStatus: result.status,
             response: result.response,
-            userId: user.id,
           },
         });
-        console.log(`[Telegram] Safety event created (no eventId from engine): id=${ev.id}`);
-      } catch (saveErr) {
-        console.error("[Telegram] Safety event save failed:", saveErr);
+      } catch (updateErr) {
+        console.error("[Telegram] Falha ao atualizar evento inicial:", updateErr);
       }
     }
 
-    // Envia resposta
     await sendTelegramMessage(chatId, result.response);
-
     return NextResponse.json({ ok: true });
+
   } catch (err) {
     console.error("[POST /api/telegram]", err);
     return NextResponse.json({ ok: true }); // Telegram espera 200 sempre

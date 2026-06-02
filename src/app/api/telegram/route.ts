@@ -64,13 +64,13 @@ export async function POST(req: NextRequest) {
     let result;
     try {
       result = await processOpenClawMessage({ chatId, message: text, source: "telegram" });
+      console.log(`[Telegram] Engine result: intent=${result.intent} status=${result.status} eventId=${result.eventId ?? "NONE"}`);
     } catch (err) {
       console.error("[POST /api/telegram] Falha no engine:", err);
       const fallbackResponse = "Sistema operacional indisponível no momento. Tente novamente em instantes.";
-      // Garante que falhas totais do engine ainda geram um OpenClawEvent
       try {
         const user = await getDefaultUser();
-        await prisma.openClawEvent.create({
+        const ev = await prisma.openClawEvent.create({
           data: {
             chatId,
             source: "telegram",
@@ -81,11 +81,34 @@ export async function POST(req: NextRequest) {
             userId: user.id,
           },
         });
+        console.log(`[Telegram] Safety event created (engine crash): id=${ev.id}`);
       } catch (saveErr) {
-        console.error("[POST /api/telegram] Fallback event save failed:", saveErr);
+        console.error("[POST /api/telegram] Safety event save failed:", saveErr);
       }
       await sendTelegramMessage(chatId, fallbackResponse);
       return NextResponse.json({ ok: true });
+    }
+
+    // Garante que todo update do Telegram tem pelo menos um OpenClawEvent no banco
+    if (!result.eventId) {
+      console.warn(`[Telegram] Engine returned no eventId for intent=${result.intent} — creating safety event`);
+      try {
+        const user = await getDefaultUser();
+        const ev = await prisma.openClawEvent.create({
+          data: {
+            chatId,
+            source: "telegram",
+            rawCommand: text,
+            interpretedIntent: result.intent,
+            executionStatus: result.status === "executed" ? "executed" : result.status === "failed" ? "failed" : "received",
+            response: result.response,
+            userId: user.id,
+          },
+        });
+        console.log(`[Telegram] Safety event created (no eventId from engine): id=${ev.id}`);
+      } catch (saveErr) {
+        console.error("[Telegram] Safety event save failed:", saveErr);
+      }
     }
 
     // Envia resposta

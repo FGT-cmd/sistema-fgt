@@ -1,92 +1,138 @@
-// TODO NOTASY DOCS: Verificar URL base, formato do header de autenticação e paths dos endpoints
-
 type InvoiceIssueForNotasy = {
   id: string;
-  serviceDescription: string;
+  createdAt: Date;
   amount: number;
-  taxpayerName: string;
   taxpayerCpfCnpj?: string | null;
-  taxpayerEmail?: string | null;
-  taxpayerPhone?: string | null;
   addressStreet?: string | null;
   addressNumber?: string | null;
   addressNeighborhood?: string | null;
   addressCity?: string | null;
   addressState?: string | null;
   addressZipCode?: string | null;
-  documentType: string;
-  client: { name: string; email?: string | null };
-  sale?: { id: string; description: string; totalAmount: number } | null;
+  client: {
+    name: string;
+    email?: string | null;
+    phone?: string | null;
+    cpf?: string | null;
+  };
+  sale?: {
+    id: string;
+    description: string;
+    totalAmount: number;
+    servicePlanId?: string | null;
+    netValue?: number | null;
+  } | null;
+  financialTx?: {
+    paidAt?: Date | null;
+  } | null;
 };
 
 export type NotasyEmitResult = {
-  externalId: string;
   invoiceNumber: string | null;
   pdfUrl: string | null;
   xmlUrl: string | null;
-  status: string;
+  status: "sent" | "issued";
   rawResponse: unknown;
 };
 
-function getEnvs() {
-  const baseUrl = process.env.NOTASY_API_BASE_URL;
-  const token = process.env.NOTASY_API_TOKEN;
+function getWebhookEndpoint(): string {
+  const endpoint = process.env.NOTASY_WEBHOOK_ENDPOINT;
+  if (!endpoint) {
+    throw new Error(
+      "Integração Notasy não configurada. Configure NOTASY_WEBHOOK_ENDPOINT com o endpoint da integração API gerado na Notasy."
+    );
+  }
+  return endpoint;
+}
 
-  if (!baseUrl) throw new Error("NOTASY_API_BASE_URL não configurada");
-  if (!token) throw new Error("NOTASY_API_TOKEN não configurada");
-
-  return { baseUrl, token };
+function digitsOnly(value: string | null | undefined): string | undefined {
+  if (!value) return undefined;
+  const digits = value.replace(/\D/g, "");
+  return digits || undefined;
 }
 
 export function buildNotasyPayload(invoice: InvoiceIssueForNotasy): Record<string, unknown> {
-  const serviceCode = process.env.NOTASY_SERVICE_CODE;
-  const cityCode = process.env.NOTASY_CITY_CODE;
-  const taxRate = process.env.NOTASY_TAX_RATE ? parseFloat(process.env.NOTASY_TAX_RATE) : undefined;
-  const companyDocument = process.env.NOTASY_COMPANY_DOCUMENT;
+  const cpf = digitsOnly(invoice.client.cpf ?? invoice.taxpayerCpfCnpj);
+  if (!cpf) {
+    throw new Error("CPF/CNPJ obrigatório para enviar à Notasy.");
+  }
 
-  // TODO NOTASY DOCS: Ajustar nomes dos campos de acordo com a spec da API Notasy
+  const saleId = invoice.sale?.id ?? invoice.id;
+  const paidAt = (invoice.financialTx?.paidAt ?? invoice.createdAt).toISOString();
+
+  const productId = invoice.sale?.servicePlanId ?? "consultoria-fgt";
+  const productName = invoice.sale?.description ?? "Consultoria FGT";
+  const offerId =
+    productName
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "") || "oferta-fgt";
+
+  const priceValue = invoice.sale?.netValue ?? invoice.amount;
+  const price = Math.round(priceValue * 100);
+
+  const phone = digitsOnly(invoice.client.phone);
+
+  const customer: Record<string, unknown> = {
+    name: invoice.client.name,
+    ...(invoice.client.email && { email: invoice.client.email }),
+    cpf,
+    ...(phone && { phone }),
+  };
+
+  const hasFullAddress =
+    invoice.addressStreet &&
+    invoice.addressNumber &&
+    invoice.addressNeighborhood &&
+    invoice.addressCity &&
+    invoice.addressState &&
+    invoice.addressZipCode;
+
+  if (hasFullAddress) {
+    customer.address = {
+      address: invoice.addressStreet,
+      address_number: invoice.addressNumber,
+      district: invoice.addressNeighborhood,
+      city: invoice.addressCity,
+      uf: invoice.addressState,
+      zipcode: invoice.addressZipCode,
+    };
+  }
+
   return {
-    servico: {
-      descricao: invoice.serviceDescription,
-      valor: invoice.amount,
-      ...(serviceCode && { codigoServico: serviceCode }),
-      ...(cityCode && { codigoCidade: cityCode }),
-      ...(taxRate !== undefined && { aliquota: taxRate }),
-    },
-    tomador: {
-      nome: invoice.taxpayerName,
-      ...(invoice.taxpayerCpfCnpj && { cpfCnpj: invoice.taxpayerCpfCnpj }),
-      ...(invoice.taxpayerEmail && { email: invoice.taxpayerEmail }),
-      ...(invoice.taxpayerPhone && { telefone: invoice.taxpayerPhone }),
-      endereco: {
-        ...(invoice.addressStreet && { logradouro: invoice.addressStreet }),
-        ...(invoice.addressNumber && { numero: invoice.addressNumber }),
-        ...(invoice.addressNeighborhood && { bairro: invoice.addressNeighborhood }),
-        ...(invoice.addressCity && { cidade: invoice.addressCity }),
-        ...(invoice.addressState && { estado: invoice.addressState }),
-        ...(invoice.addressZipCode && { cep: invoice.addressZipCode }),
+    event: "order_approved",
+    data: {
+      sale: {
+        id: saleId,
+        paid_at: paidAt,
       },
+      items: [
+        {
+          product_id: productId,
+          offer_id: offerId,
+          product_name: productName,
+          offer_name: productName,
+          price,
+          currency: "BRL",
+          quantity: 1,
+        },
+      ],
+      customer,
     },
-    ...(companyDocument && { prestador: { cpfCnpj: companyDocument } }),
   };
 }
 
 export async function emitNotasyInvoice(invoice: InvoiceIssueForNotasy): Promise<NotasyEmitResult> {
-  const { baseUrl, token } = getEnvs();
+  const endpoint = getWebhookEndpoint();
   const payload = buildNotasyPayload(invoice);
-
-  // TODO NOTASY DOCS: Confirmar o path correto do endpoint de emissão de NFS-e
-  const endpoint = `${baseUrl}/nfse/emitir`;
 
   let rawResponse: unknown;
   try {
     const res = await fetch(endpoint, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        // TODO NOTASY DOCS: Confirmar formato do header de autorização (Bearer, Basic, ou header customizado)
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
 
@@ -96,16 +142,13 @@ export async function emitNotasyInvoice(invoice: InvoiceIssueForNotasy): Promise
       throw new Error(`Notasy retornou ${res.status}: ${JSON.stringify(rawResponse)}`);
     }
 
-    // TODO NOTASY DOCS: Ajustar campos do retorno conforme spec (id, numero, urlPdf, urlXml, status)
-    const data = rawResponse as Record<string, unknown>;
-    return {
-      externalId: String(data.id ?? data.externalId ?? ""),
-      invoiceNumber: data.numero != null ? String(data.numero) : null,
-      pdfUrl: data.urlPdf != null ? String(data.urlPdf) : null,
-      xmlUrl: data.urlXml != null ? String(data.urlXml) : null,
-      status: String(data.status ?? "sent"),
-      rawResponse,
-    };
+    const data = (rawResponse ?? {}) as Record<string, unknown>;
+    const invoiceNumber = data.invoiceNumber != null ? String(data.invoiceNumber) : null;
+    const pdfUrl = data.pdfUrl != null ? String(data.pdfUrl) : null;
+    const xmlUrl = data.xmlUrl != null ? String(data.xmlUrl) : null;
+    const status: "sent" | "issued" = invoiceNumber || pdfUrl || xmlUrl ? "issued" : "sent";
+
+    return { invoiceNumber, pdfUrl, xmlUrl, status, rawResponse };
   } catch (err) {
     throw Object.assign(
       err instanceof Error ? err : new Error(String(err)),

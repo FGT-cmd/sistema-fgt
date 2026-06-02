@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  if (invoice.status !== "ready" && invoice.status !== "error") {
+  if (invoice.status !== "ready" && invoice.status !== "error" && invoice.status !== "sent") {
     return NextResponse.json(
       { error: `Emissão não permitida no status atual: ${invoice.status}` },
       { status: 422 }
@@ -44,17 +44,34 @@ export async function POST(req: NextRequest) {
     data: { status: "sending", errorMessage: null },
   });
 
-  const rawPayload = buildNotasyPayload(invoice);
+  let rawPayload: Record<string, unknown>;
+  try {
+    rawPayload = buildNotasyPayload(invoice);
+  } catch (validationErr) {
+    const message = validationErr instanceof Error ? validationErr.message : String(validationErr);
+    const updated = await prisma.invoiceIssue.update({
+      where: { id: invoiceIssueId },
+      data: {
+        status: "error",
+        externalProvider: "notasy",
+        errorMessage: message,
+        rawPayload: Prisma.JsonNull,
+        rawResponse: Prisma.JsonNull,
+        sentAt: new Date(),
+      },
+    });
+    return NextResponse.json({ error: message, invoice: updated }, { status: 422 });
+  }
 
   try {
     const result = await emitNotasyInvoice(invoice);
 
+    const isIssued = result.status === "issued";
     const updated = await prisma.invoiceIssue.update({
       where: { id: invoiceIssueId },
       data: {
-        status: "issued",
+        status: result.status,
         externalProvider: "notasy",
-        externalId: result.externalId || null,
         invoiceNumber: result.invoiceNumber ?? null,
         pdfUrl: result.pdfUrl ?? null,
         xmlUrl: result.xmlUrl ?? null,
@@ -62,7 +79,7 @@ export async function POST(req: NextRequest) {
         rawResponse: result.rawResponse as Prisma.InputJsonValue,
         errorMessage: null,
         sentAt: new Date(),
-        issuedAt: new Date(),
+        ...(isIssued && { issuedAt: new Date() }),
       },
     });
 

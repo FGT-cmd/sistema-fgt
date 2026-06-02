@@ -28,6 +28,7 @@ export async function PATCH(
     instData.amount = a;
     txData.amount   = a;
   }
+  const newAmount = body.amount !== undefined ? parseFloat(body.amount) : undefined;
   if (body.notes !== undefined) {
     instData.notes = body.notes ?? undefined;
   }
@@ -45,6 +46,14 @@ export async function PATCH(
     await prisma.financialTx.updateMany({
       where: { installmentId: parcelaId },
       data: txData,
+    });
+  }
+
+  // Sincroniza InvoiceIssue.amount quando o valor da parcela muda (exceto notas já emitidas)
+  if (newAmount !== undefined) {
+    await prisma.invoiceIssue.updateMany({
+      where: { saleId: installment.saleId, status: { notIn: ["issued", "cancelled"] } },
+      data: { amount: newAmount },
     });
   }
 

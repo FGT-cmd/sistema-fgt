@@ -146,28 +146,28 @@ export async function GET() {
     }),
 
     // Recebido este mês (parcelas pagas)
-    prisma.installment.aggregate({
+    prisma.installment.findMany({
       where: {
         status: "pago",
         paidAt: { gte: monthStart, lte: todayEnd },
         sale: { client: { userId: user.id } },
       },
-      _sum: { amount: true },
+      select: { netValue: true, amount: true },
     }),
 
     // A receber (parcelas não pagas com vencimento futuro)
-    prisma.installment.aggregate({
+    prisma.installment.findMany({
       where: {
         status: { not: "pago" },
         dueDate: { gt: todayEnd },
         sale: { client: { userId: user.id } },
       },
-      _sum: { amount: true },
+      select: { netValue: true, amount: true },
     }),
   ]);
 
-  // Atrasado: soma das parcelas vencidas
-  const atrasadoTotal = overduePayments.reduce((s, p) => s + p.amount, 0);
+  // Atrasado: soma das parcelas vencidas (preferindo netValue para não inflar com taxas do gateway)
+  const atrasadoTotal = overduePayments.reduce((s, p) => s + (p.netValue ?? p.amount), 0);
 
   // Alunos em atenção: derivados de overduePayments agrupados por cliente
   const clientsMap = new Map<string, { id: string; name: string; overdueCount: number; overdueTotal: number }>();
@@ -175,7 +175,7 @@ export async function GET() {
     const { id, name } = p.sale.client;
     const ex = clientsMap.get(id) ?? { id, name, overdueCount: 0, overdueTotal: 0 };
     ex.overdueCount++;
-    ex.overdueTotal += p.amount;
+    ex.overdueTotal += p.netValue ?? p.amount;
     clientsMap.set(id, ex);
   }
   const studentsAttention = Array.from(clientsMap.values()).slice(0, 5);
@@ -193,8 +193,8 @@ export async function GET() {
     priorityTasks,
     studentsAttention,
     financialSummary: {
-      recebidoMes: recebidoMes._sum.amount ?? 0,
-      aReceber: aReceberTotal._sum.amount ?? 0,
+      recebidoMes: recebidoMes.reduce((s, p) => s + (p.netValue ?? p.amount), 0),
+      aReceber: aReceberTotal.reduce((s, p) => s + (p.netValue ?? p.amount), 0),
       atrasado: atrasadoTotal,
     },
   });

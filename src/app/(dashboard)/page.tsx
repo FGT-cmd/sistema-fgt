@@ -24,6 +24,7 @@ type Task = {
 type Payment = {
   id: string;
   amount: number;
+  netValue?: number | null;
   dueDate: string;
   label: string | null;
   status: string;
@@ -276,7 +277,7 @@ export default function HomePage() {
         pendingFinancial: Math.max(0, prev.pendingFinancial - 1),
         financialSummary: {
           ...prev.financialSummary,
-          atrasado: Math.max(0, prev.financialSummary.atrasado - payment.amount),
+          atrasado: Math.max(0, prev.financialSummary.atrasado - (payment.netValue ?? payment.amount)),
         },
       };
     });

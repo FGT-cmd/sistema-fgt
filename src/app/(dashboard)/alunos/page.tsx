@@ -962,6 +962,7 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
   // notas fiscais
   const [invoiceIssues, setInvoiceIssues] = useState<InvoiceIssue[]>(aluno.invoiceIssues ?? []);
   const [emittingInvoiceId, setEmittingInvoiceId] = useState<string | null>(null);
+  const [showTechDetails, setShowTechDetails] = useState(false);
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
 
   useEffect(() => {
@@ -1297,10 +1298,10 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
                   {aluno.paymentMethod && <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{aluno.paymentMethod}</span>}
                   {aluno.source && <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">📍 {sourceLabel(aluno.source)}</span>}
                 </div>
-                {aluno.planDetails && (
+                {aluno.planDetails && aluno.source !== "checkout_infinitepay" && (
                   <div className="col-span-2 p-2.5 bg-indigo-50 border border-indigo-100 rounded-lg text-xs text-indigo-800">
                     <span className="font-bold">
-                      {aluno.planName === "Parceria/Collab" ? "Parceria:" : aluno.source === "checkout_infinitepay" ? "Produto:" : "Personalizado:"}
+                      {aluno.planName === "Parceria/Collab" ? "Parceria:" : "Personalizado:"}
                     </span>{" "}{aluno.planDetails}
                   </div>
                 )}
@@ -1311,6 +1312,34 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
                 )}
                 {aluno.notes && <p className="col-span-2 text-xs text-gray-500 italic">{aluno.notes}</p>}
                 <p className="col-span-2 text-xs text-gray-400">Desde {fmtDate(aluno.createdAt)}</p>
+                {aluno.source === "checkout_infinitepay" && (
+                  <div className="col-span-2 mt-1">
+                    <button
+                      onClick={() => setShowTechDetails(v => !v)}
+                      className="flex items-center gap-1 text-[10px] text-gray-400 hover:text-gray-600"
+                    >
+                      <ChevronDown className={`w-3 h-3 transition-transform ${showTechDetails ? "rotate-180" : ""}`} />
+                      Detalhes técnicos do checkout
+                    </button>
+                    {showTechDetails && (
+                      <div className="mt-1.5 p-2.5 bg-gray-50 border border-gray-200 rounded-lg text-[10px] text-gray-500 space-y-1">
+                        {aluno.planDetails && <p className="break-all text-gray-600">{aluno.planDetails}</p>}
+                        {(() => {
+                          const s0 = sales.find(s => s.grossValue != null && s.grossValue !== s.totalAmount);
+                          if (!s0) return null;
+                          const diff = (s0.grossValue ?? 0) - s0.totalAmount;
+                          return (
+                            <div className="mt-1 pt-1 border-t border-gray-200 space-y-0.5">
+                              <p>Cobrado no cartão: <span className="font-semibold">{fmt(s0.grossValue!)}</span></p>
+                              <p>Valor do serviço: <span className="font-semibold">{fmt(s0.totalAmount)}</span></p>
+                              {diff > 0.005 && <p className="text-amber-600">Juros/taxa: <span className="font-semibold">{fmt(diff)}</span></p>}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Contexto operacional */}
@@ -1447,8 +1476,8 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
                       <div className="flex items-center gap-2 shrink-0">
                         <div className="text-right">
                           <p className="text-sm font-bold text-gray-700">{fmt(displayValue)}</p>
-                          {sale.netValue && sale.netValue !== sale.totalAmount && (
-                            <p className="text-[10px] text-gray-400">bruto {fmt(sale.totalAmount)}</p>
+                          {sale.grossValue && sale.grossValue !== sale.totalAmount && (
+                            <p className="text-[10px] text-gray-400">cobrado {fmt(sale.grossValue)}</p>
                           )}
                         </div>
                         <button
@@ -1528,7 +1557,7 @@ function AlunoDrawer({ aluno, onClose, onUpdate, onDelete, autoOpenPayForm, plan
                   const sc = statusCfgInv[inv.status] ?? { label: inv.status, cls: "bg-gray-100 text-gray-500" };
                   const isEmitting = emittingInvoiceId === inv.id;
                   const canEmit = inv.status === "ready";
-                  const canResend = inv.status === "error";
+                  const canResend = inv.status === "error" || inv.status === "sent";
                   return (
                     <div key={inv.id} className="bg-gray-50 rounded-xl p-3 border border-gray-100">
                       <div className="flex items-center justify-between gap-2 mb-1">
@@ -1910,7 +1939,7 @@ function AlunosPageContent() {
                 <select value={filterFunil} onChange={e => setFilterFunil(e.target.value)}
                   className="border border-gray-200 rounded-lg px-2.5 py-1 text-xs text-gray-600 focus:outline-none focus:border-indigo-400 bg-white">
                   <option value="todos">Todos os funis</option>
-                  {allFunis.map(f => <option key={f} value={f}>{f}</option>)}
+                  {allFunis.map(f => <option key={f} value={f}>{f === "checkout_infinitepay" ? "Checkout InfinitePay" : f}</option>)}
                 </select>
               </div>
             )}
@@ -1971,7 +2000,11 @@ function AlunosPageContent() {
                           ? <span className="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full font-medium">{aluno.planName}</span>
                           : <span className="text-xs text-gray-300">—</span>}
                       </td>
-                      <td className="px-4 py-3 hidden md:table-cell text-xs text-gray-500">{aluno.source || "—"}</td>
+                      <td className="px-4 py-3 hidden md:table-cell text-xs text-gray-500">
+                        {aluno.source === "checkout_infinitepay"
+                          ? <span className="text-[10px] bg-blue-50 text-blue-500 px-1.5 py-0.5 rounded font-medium">Checkout</span>
+                          : aluno.source || "—"}
+                      </td>
                       <td className="px-4 py-3 hidden lg:table-cell text-xs text-gray-500">{aluno.paymentMethod || "—"}</td>
                       <td className="px-4 py-3 text-center">
                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${statusCfg(aluno.status).color}`}>

@@ -102,7 +102,8 @@ async function createFinancialChain(
     sessionId: string;
     clientId: string;
     productName: string;
-    totalAmount: number;
+    netValue: number;
+    grossValue: number | null;
     paidAt: Date;
     paymentMethod: string;
     orderNsu: string;
@@ -111,19 +112,21 @@ async function createFinancialChain(
   const sale = await tx.sale.create({
     data: {
       description: opts.productName,
-      totalAmount: opts.totalAmount,
+      totalAmount: opts.netValue,
       installmentsCount: 1,
       paymentMethod: opts.paymentMethod,
       negotiationType: opts.paymentMethod,
       status: "ativo",
       clientId: opts.clientId,
+      grossValue: opts.grossValue,
+      netValue: opts.netValue,
     },
   });
 
   const installment = await tx.installment.create({
     data: {
       number: 1,
-      amount: opts.totalAmount,
+      amount: opts.netValue,
       dueDate: opts.paidAt,
       paidAt: opts.paidAt,
       status: "pago",
@@ -136,7 +139,7 @@ async function createFinancialChain(
     data: {
       type: "receita",
       description: opts.productName,
-      amount: opts.totalAmount,
+      amount: opts.netValue,
       category: "Consultoria",
       status: "pago",
       dueDate: opts.paidAt,
@@ -253,7 +256,8 @@ export async function processInfinitePayWebhook(
     // Reparo 3: registros financeiros ausentes
     let resolvedSaleId: string | null = session.saleId;
     if (!session.saleId) {
-      const totalAmount = (session.paidAmountCents ?? session.amountCents) / 100;
+      const grossValue = session.paidAmountCents != null ? session.paidAmountCents / 100 : null;
+      const netValue = session.amountCents / 100;
       const paidAt = session.paidAt ?? new Date();
 
       const chainResult = await prisma.$transaction(async (tx) => {
@@ -261,7 +265,8 @@ export async function processInfinitePayWebhook(
           sessionId: session.id,
           clientId: resolvedClientId!,
           productName: session.productName,
-          totalAmount,
+          netValue,
+          grossValue,
           paidAt,
           paymentMethod,
           orderNsu,
@@ -283,7 +288,7 @@ export async function processInfinitePayWebhook(
             documentType:      "nfse",
             status:            "ready",
             serviceDescription: session.productName,
-            amount:            totalAmount,
+            amount:            netValue,
             taxpayerName:      session.customerName?.trim() || "",
             taxpayerCpfCnpj:   session.customerCpf?.trim()   || null,
             taxpayerEmail:     session.customerEmail?.trim()  || null,
@@ -324,7 +329,8 @@ export async function processInfinitePayWebhook(
   }
 
   const user = await getDefaultUser();
-  const totalAmount = (paidAmountCents ?? session.amountCents) / 100;
+  const grossValue = paidAmountCents != null ? paidAmountCents / 100 : null;
+  const netValue = session.amountCents / 100;
   let idempotentRace = false;
   let capturedClientId: string | null = null;
   let capturedSaleId: string | null = null;
@@ -386,7 +392,8 @@ export async function processInfinitePayWebhook(
       sessionId: fresh.id,
       clientId: resolvedClientId,
       productName: session.productName,
-      totalAmount,
+      netValue,
+      grossValue,
       paidAt,
       paymentMethod,
       orderNsu,
@@ -404,7 +411,7 @@ export async function processInfinitePayWebhook(
         documentType:      "nfse",
         status:            "ready",
         serviceDescription: session.productName,
-        amount:            totalAmount,
+        amount:            netValue,
         taxpayerName:      customerName,
         taxpayerCpfCnpj:   session.customerCpf?.trim()   || null,
         taxpayerEmail:     session.customerEmail?.trim()  || null,

@@ -31,7 +31,7 @@ const secondaryNav = [
   { href: "/crm-alunos",   icon: GraduationCap, label: "CRM Alunos" },
   { href: "/agenda",       icon: Calendar,      label: "Agenda" },
   { href: "/projetos",     icon: FolderOpen,    label: "Projetos" },
-  { href: "/openclaw",     icon: Bot,           label: "OpenClaw" },
+  { href: "/openclaw",     icon: Bot,           label: "Automações" },
 ];
 
 // Coming soon (greyed out, no href)

@@ -38,6 +38,32 @@ export const RECEIVABLE_METHODS = [
   "Pix", "Cartão", "InfinitePay", "Dinheiro", "Transferência", "Boleto", "Outro",
 ] as const;
 
+/**
+ * Normaliza formas de pagamento em texto livre (vindas de IA, de dropdowns
+ * com rótulos próprios como "Cartão de Crédito"/"Cartão de Débito", etc.)
+ * para o vocabulário de RECEIVABLE_METHODS.
+ *
+ * Qualquer variante de cartão — "Crédito", "Débito", "Cartão de Crédito",
+ * "Cartão de Débito" ou qualquer valor que contenha "cart" (case e acento
+ * insensível) — vira "Cartão". Valores já presentes em RECEIVABLE_METHODS
+ * passam direto. Qualquer outro valor vira "Outro".
+ */
+export function toReceivableMethod(raw: string | null | undefined): string {
+  if (raw && (RECEIVABLE_METHODS as readonly string[]).includes(raw)) return raw;
+
+  const normalized = (raw ?? "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .trim();
+
+  if (normalized === "credito" || normalized === "debito" || normalized.includes("cart")) {
+    return "Cartão";
+  }
+
+  return "Outro";
+}
+
 export function toNumber(v: string): number {
   // Aceita formatação brasileira com separador decimal (vírgula) e de milhares (ponto).
   // Regra: se tem vírgula, é decimal; se tem ponto, decide pelo padrão

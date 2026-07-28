@@ -8,6 +8,7 @@ import {
   emptyLine,
   toApiInstallments,
   toNumber,
+  toReceivableMethod,
   type ReceivableLine,
 } from "./receivables";
 
@@ -313,6 +314,48 @@ describe("toApiInstallments", () => {
     const lines = [line({ id: "a", amount: "100" }), line({ id: "b", amount: "" }),
                    line({ id: "c", amount: "0" })];
     expect(toApiInstallments(lines)).toHaveLength(1);
+  });
+});
+
+describe("toReceivableMethod", () => {
+  it("mapeia Credito para Cartao", () => {
+    expect(toReceivableMethod("Crédito")).toBe("Cartão");
+  });
+
+  it("mapeia Debito para Cartao", () => {
+    expect(toReceivableMethod("Débito")).toBe("Cartão");
+  });
+
+  it("mapeia Cartao de Credito para Cartao", () => {
+    expect(toReceivableMethod("Cartão de Crédito")).toBe("Cartão");
+  });
+
+  it("mapeia Cartao de Debito para Cartao", () => {
+    expect(toReceivableMethod("Cartão de Débito")).toBe("Cartão");
+  });
+
+  it("mapeia variantes sem acento e minusculas contendo 'cart' para Cartao", () => {
+    expect(toReceivableMethod("cartao de credito")).toBe("Cartão");
+    expect(toReceivableMethod("CARTÃO")).toBe("Cartão");
+  });
+
+  it("passa direto valores ja validos de RECEIVABLE_METHODS", () => {
+    expect(toReceivableMethod("Pix")).toBe("Pix");
+    expect(toReceivableMethod("Cartão")).toBe("Cartão");
+    expect(toReceivableMethod("Boleto")).toBe("Boleto");
+    expect(toReceivableMethod("Dinheiro")).toBe("Dinheiro");
+    expect(toReceivableMethod("Transferência")).toBe("Transferência");
+    expect(toReceivableMethod("InfinitePay")).toBe("InfinitePay");
+  });
+
+  it("mapeia valores desconhecidos para Outro", () => {
+    expect(toReceivableMethod("Cheque")).toBe("Outro");
+  });
+
+  it("mapeia null/undefined/vazio para Outro", () => {
+    expect(toReceivableMethod(null)).toBe("Outro");
+    expect(toReceivableMethod(undefined)).toBe("Outro");
+    expect(toReceivableMethod("")).toBe("Outro");
   });
 });
 

@@ -6,7 +6,7 @@
 import { prisma } from "@/lib/prisma";
 import Anthropic from "@anthropic-ai/sdk";
 import { findClientMatches } from "@/lib/whatsapp/executor";
-import { defaultCashDate } from "@/lib/financeiro/receivables";
+import { defaultCashDate, toReceivableMethod } from "@/lib/financeiro/receivables";
 import type {
   OCCreateStudentData, OCRegisterPaymentData, OCCreateTaskData,
   OCAddStudentNoteData, OCSaveContentIdeaData, OCEnriched, OCQueryType,
@@ -21,6 +21,16 @@ const fmt = (v: number) =>
 const fmtDate = (iso: string) => {
   const d = new Date(iso + "T12:00:00");
   return d.toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" });
+};
+
+// Converte um Date em "YYYY-MM-DD" usando os componentes LOCAIS (ano/mês/dia),
+// não o UTC de toISOString() — que pode rolar para o dia seguinte quando o
+// horário local está tarde o suficiente em fusos negativos (ex: UTC-3).
+const toLocalIsoDate = (d: Date): string => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 };
 
 // ─── 1. getDailyPendingSummary ────────────────────────────────────
@@ -230,7 +240,7 @@ export async function createStudent(
     const today = new Date();
     const installmentAmount = enriched.planTotal / enriched.planInstallments;
 
-    const metodo = data.paymentMethod || "Pix";
+    const metodo = toReceivableMethod(data.paymentMethod || "Pix");
 
     const sale = await prisma.sale.create({
       data: {
@@ -249,7 +259,7 @@ export async function createStudent(
       const dueDate = new Date(today);
       dueDate.setMonth(dueDate.getMonth() + (i - 1));
       dueDate.setDate(today.getDate()); // mesmo dia do mês
-      const cashIso = defaultCashDate(dueDate.toISOString().slice(0, 10), metodo);
+      const cashIso = defaultCashDate(toLocalIsoDate(dueDate), metodo);
       await prisma.installment.create({
         data: {
           number: i,

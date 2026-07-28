@@ -13,7 +13,7 @@ import {
 import { ReceivablesTable } from "@/components/financeiro/ReceivablesTable";
 import {
   buildPreset, toApiInstallments, sumTotals, emptyLine, defaultCashDate,
-  toNumber, RECEIVABLE_METHODS,
+  toNumber, toReceivableMethod,
   type ReceivableLine, type PresetId,
 } from "@/lib/financeiro/receivables";
 
@@ -114,15 +114,6 @@ function formatPhone(raw: string): string {
   if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
   if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
   return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
-}
-
-// A IA de /api/alunos/analisar responde formas de pagamento fora do
-// vocabulário de RECEIVABLE_METHODS (ex: "Crédito", "Débito"). Normaliza
-// qualquer valor recebido para uma opção válida do select de linhas.
-function toReceivableMethod(raw: string | null | undefined): string {
-  if (raw === "Crédito" || raw === "Débito") return "Cartão";
-  if (raw && (RECEIVABLE_METHODS as readonly string[]).includes(raw)) return raw;
-  return "Outro";
 }
 
 function isValidIsoDate(v: unknown): v is string {

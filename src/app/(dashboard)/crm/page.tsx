@@ -7,7 +7,7 @@ import {
   UserPlus, AlertTriangle, Clock, Filter, TrendingUp, BarChart2,
 } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/utils";
-import { defaultCashDate } from "@/lib/financeiro/receivables";
+import { defaultCashDate, toReceivableMethod } from "@/lib/financeiro/receivables";
 
 // ─── Pipeline stages ─────────────────────────────────────────────────────────
 
@@ -369,7 +369,7 @@ function ConvertModal({ deal, onClose, onDone }: { deal: Deal; onClose: () => vo
       const count = parseInt(payment.installments) || 1;
       const perParcela = parseFloat(payment.totalAmount) / count;
       const firstDue = new Date(payment.firstDueDate + "T12:00:00");
-      const metodo = payment.paymentMethod || "Pix";
+      const metodo = toReceivableMethod(payment.paymentMethod || "Pix");
       const customInstallments = Array.from({ length: count }, (_, i) => {
         const d = new Date(firstDue);
         d.setMonth(d.getMonth() + i);

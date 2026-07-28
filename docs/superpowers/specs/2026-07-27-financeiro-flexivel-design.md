@@ -138,6 +138,29 @@ passa a ser uma tabela de recebimentos com linhas livres. Cada linha tem:
 Quando a taxa for do Fernando, o formulário pede o valor ou percentual da taxa e
 calcula `netValue` automaticamente. O Fernando não faz conta na mão.
 
+#### Atalhos de negociação
+
+Como os formatos praticados se repetem, o formulário oferece atalhos que montam as
+linhas prontas a partir do valor total. O Fernando ajusta valores e datas depois.
+
+| Atalho | Linhas geradas |
+|---|---|
+| Total no cartão | 1 linha Cartão, caixa em 1 dia útil |
+| Pix à vista | 1 linha Pix, caixa no mesmo dia |
+| Entrada + parcelas no Pix | 1 linha de entrada + 2 ou 3 linhas Pix mensais |
+| Entrada + restante no cartão | 1 linha de entrada + 1 linha Cartão futura |
+| Entrada + restante no Pix | 1 linha de entrada + 1 linha Pix futura |
+
+Regras dos atalhos:
+
+- O valor total informado é distribuído entre as linhas; a entrada é editável e o
+  restante se divide igualmente entre as parcelas.
+- Os vencimentos das parcelas são espaçados mensalmente a partir da data de entrada.
+- `cashDate` de cada linha segue a regra automática da forma de pagamento.
+- **Atalho é ponto de partida, nunca trava.** Após aplicá-lo, todas as linhas
+  continuam editáveis, e linhas podem ser adicionadas ou removidas livremente.
+- Montar a venda do zero, linha a linha, continua disponível e não exige atalho.
+
 A análise por IA existente (`/api/alunos/analisar`, que interpreta a negociação em
 texto livre) permanece, agora podendo preencher também forma de pagamento por linha.
 
@@ -201,5 +224,8 @@ A implementação está completa quando o Fernando conseguir registrar, sem gamb
 2. Uma venda dividida em dois cartões diferentes
 3. Uma venda em que ele assume os juros do cartão, com o caixa refletindo o líquido
 4. Um pagamento único à vista
-5. Faturamento e caixa do mês batendo com a realidade em todos os casos acima
-6. Todas as vendas já existentes continuando visíveis e corretas
+5. Uma venda com entrada + restante no Pix alguns dias depois
+6. Faturamento e caixa do mês batendo com a realidade em todos os casos acima
+7. Todas as vendas já existentes continuando visíveis e corretas
+8. Os atalhos de negociação montando as linhas corretamente, e permitindo edição
+   livre de qualquer linha depois de aplicados

@@ -68,11 +68,16 @@ trabalho que fica pela metade.
 Cada linha carrega os seus próprios atributos. Não há caso especial por forma de
 pagamento — uma estrutura única absorve todas as combinações, inclusive as futuras.
 
+Formatos que a FGT realmente pratica hoje, e como cada um fica:
+
 | Caso real | Representação |
 |---|---|
-| Entrada Pix + 3x cartão | 4 linhas: 1 Pix + 3 Cartão |
+| Valor total no cartão | 1 linha Cartão; caixa em 1 dia útil |
+| Pix à vista | 1 linha Pix; caixa no mesmo dia |
+| Pix parcelado: entrada + até 3x | 2 a 4 linhas Pix, com vencimentos distintos |
+| Entrada + restante no cartão dias depois | 1 linha da entrada + 1 linha Cartão futura |
+| Entrada + restante no Pix dias depois | 1 linha da entrada + 1 linha Pix futura |
 | Dois cartões diferentes | 2 linhas, ambas Cartão, valores distintos |
-| Pagamento único à vista | 1 linha, marcada como paga |
 | Casal, pagamento único no cartão | 1 linha no valor cheio |
 
 ### 1. Modelo de dados
@@ -94,7 +99,17 @@ diferentes — exatamente o caso de entrada à vista + parcelas futuras.
 - `dueDate` — data combinada com o aluno (o que foi negociado)
 - `cashDate` — data em que o dinheiro efetivamente entra na conta
 
-Quando não houver antecipação ou diferença, `cashDate` pode ser igual a `dueDate`.
+**Preenchimento automático de `cashDate`.** Os prazos de recebimento da FGT são
+previsíveis, então o formulário calcula `cashDate` a partir da forma de pagamento,
+sem digitação manual:
+
+| Forma de pagamento | `cashDate` |
+|---|---|
+| Pix | mesma data de `dueDate` (cai na hora) |
+| Cartão | `dueDate` + 1 dia útil (pula fim de semana) |
+| Demais formas | igual a `dueDate`, editável |
+
+O valor é sempre editável — a regra é um padrão inteligente, não uma trava.
 
 **Taxa do cartão — sem campo novo.** A relação entre `amount` (bruto) e `netValue`
 (líquido) já expressa quem absorveu a taxa:

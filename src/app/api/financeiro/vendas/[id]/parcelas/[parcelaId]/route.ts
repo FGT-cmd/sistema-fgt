@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { parseInstallmentAmount } from "@/lib/financeiro/saleInstallments";
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -43,8 +44,23 @@ export async function PATCH(
     txData.dueDate   = d;
   }
 
-  const newAmount = body.amount !== undefined ? parseFloat(body.amount) : undefined;
-  if (newAmount !== undefined && !Number.isNaN(newAmount)) {
+  // Um recebimento tem que valer alguma coisa. Zero, negativo ou campo
+  // vazio não são correção de valor — apagariam o recebível (bruto, líquido
+  // e o InvoiceIssue pendente da venda). Barrado aqui, na fronteira, para
+  // que nenhum chamador consiga zerar uma parcela.
+  let newAmount: number | undefined;
+  if (body.amount !== undefined) {
+    const parsed = parseInstallmentAmount(body.amount);
+    if (parsed === null) {
+      return NextResponse.json(
+        { error: "Valor da parcela deve ser maior que zero" },
+        { status: 400 },
+      );
+    }
+    newAmount = parsed;
+  }
+
+  if (newAmount !== undefined) {
     instData.amount = newAmount;
     txData.amount   = newAmount;
 
@@ -90,7 +106,7 @@ export async function PATCH(
   }
 
   // Sincroniza InvoiceIssue.amount quando o valor da parcela muda (exceto notas já emitidas)
-  if (newAmount !== undefined && !Number.isNaN(newAmount)) {
+  if (newAmount !== undefined) {
     await prisma.invoiceIssue.updateMany({
       where: { saleId: installment.saleId, status: { notIn: ["issued", "cancelled"] } },
       data: { amount: newAmount },

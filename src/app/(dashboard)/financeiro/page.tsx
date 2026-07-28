@@ -235,8 +235,11 @@ function EditTxModal({ tx, clients, incomeCats, expenseCats, recvMethods, payMet
         )}
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className={labelCls}>Valor</label>
-            <input value={form.amount} onChange={e=>f("amount",e.target.value)} type="number" step="0.01" className={inputCls}/>
+            <label className={labelCls}>Valor *</label>
+            {/* required/min: um valor apagado ou zerado não é correção, é
+                apagar o recebimento. A rota de parcela também recusa — aqui
+                é só para o usuário receber o aviso no próprio formulário. */}
+            <input required min="0.01" value={form.amount} onChange={e=>f("amount",e.target.value)} type="number" step="0.01" className={inputCls}/>
           </div>
           <div>
             <label className={labelCls}>Data</label>
@@ -447,8 +450,10 @@ function NovaVendaModal({ clients, recvMethods, onClose, onSave }: {
         ...form,
         totalAmount:        total,
         installmentsCount:  parcelas.length,
-        // Forma já normalizada para o vocabulário do app (ex: "Cartão de
-        // Crédito" → "Cartão"), a mesma gravada em cada parcela.
+        // Forma exatamente como o usuário escolheu (inclusive "Plataforma"
+        // e formas criadas em Configurações), a mesma gravada em cada
+        // parcela. A normalização só serve para derivar a data de caixa,
+        // dentro de buildSimpleSaleInstallments.
         paymentMethod:      parcelas[0].paymentMethod,
         customInstallments: parcelas,
         // Rótulo descritivo apenas; não controla lógica de exibição.

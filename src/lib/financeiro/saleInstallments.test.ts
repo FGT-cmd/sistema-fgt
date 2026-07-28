@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildInstallmentCreateData } from "./saleInstallments";
+import { buildInstallmentCreateData, parseInstallmentAmount } from "./saleInstallments";
 
 const now = new Date("2026-07-27T10:00:00.000Z");
 
@@ -76,5 +76,35 @@ describe("buildInstallmentCreateData", () => {
 
   it("lista vazia gera nenhuma parcela", () => {
     expect(buildInstallmentCreateData([], { now })).toEqual([]);
+  });
+});
+
+describe("parseInstallmentAmount", () => {
+  it("aceita valor positivo", () => {
+    expect(parseInstallmentAmount(1200)).toBe(1200);
+    expect(parseInstallmentAmount("1200.5")).toBe(1200.5);
+    expect(parseInstallmentAmount(0.01)).toBe(0.01);
+  });
+
+  it("rejeita zero", () => {
+    // Zerar uma parcela apaga o recebivel: zera netValue e o InvoiceIssue
+    // pendente da venda. Nao e correcao de valor.
+    expect(parseInstallmentAmount(0)).toBeNull();
+    expect(parseInstallmentAmount("0")).toBeNull();
+  });
+
+  it("rejeita valor negativo", () => {
+    expect(parseInstallmentAmount(-1)).toBeNull();
+    expect(parseInstallmentAmount("-1200")).toBeNull();
+  });
+
+  it("rejeita campo vazio e texto nao numerico", () => {
+    // O input "Valor" da edicao de parcela nao era required: apagar o campo
+    // mandava "" para a rota.
+    expect(parseInstallmentAmount("")).toBeNull();
+    expect(parseInstallmentAmount("abc")).toBeNull();
+    expect(parseInstallmentAmount(null)).toBeNull();
+    expect(parseInstallmentAmount(undefined)).toBeNull();
+    expect(parseInstallmentAmount(NaN)).toBeNull();
   });
 });

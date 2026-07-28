@@ -23,6 +23,20 @@ export type InstallmentCreateData = {
   paymentMethod?: string;
 };
 
+/**
+ * Valida e converte o valor bruto recebido por PATCH de parcela.
+ *
+ * Devolve `null` para tudo que não é um valor de recebimento legítimo —
+ * vazio, texto, NaN, negativo e principalmente ZERO. Corrigir uma parcela
+ * para zero não é correção de valor, é apagar um recebível: zeraria junto o
+ * netValue e o InvoiceIssue pendente da venda. O formulário de edição não
+ * exigia o campo, então um campo apagado por engano chegava aqui como "".
+ */
+export function parseInstallmentAmount(raw: unknown): number | null {
+  const n = typeof raw === "number" ? raw : parseFloat(String(raw));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 export function buildInstallmentCreateData(
   list: CustomInstallmentInput[],
   opts: { markAllPaid?: boolean; now?: Date } = {},

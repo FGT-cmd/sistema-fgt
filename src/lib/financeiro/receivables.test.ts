@@ -420,14 +420,29 @@ describe("buildSimpleSaleInstallments", () => {
     expect(parcelas.map(p => p.dueDate)).toEqual(["2026-01-31", "2026-02-28", "2026-03-31"]);
   });
 
-  it("normaliza a forma de pagamento e deriva a data de caixa", () => {
+  it("guarda a forma escolhida verbatim e normaliza so para a data de caixa", () => {
     const parcelas = buildSimpleSaleInstallments({
       total: 1000, installmentsCount: 1,
       paymentMethod: "Cartão de Crédito", firstDueDate: "2026-07-27",
     });
-    expect(parcelas[0].paymentMethod).toBe("Cartão");
-    // Cartão cai em um dia útil; 2026-07-27 é segunda.
+    // O rótulo é do usuário: é o que ele vê na lista e filtra por Forma.
+    expect(parcelas[0].paymentMethod).toBe("Cartão de Crédito");
+    // Só defaultCashDate precisa do vocabulário canônico: variante de cartão
+    // cai em um dia útil; 2026-07-27 é segunda.
     expect(parcelas[0].cashDate).toBe("2026-07-28");
+  });
+
+  it("preserva formas fora do vocabulario canonico (ex: Plataforma)", () => {
+    // "Plataforma" vem de DEFAULT_RECV_METHODS e formas configuradas pelo
+    // dono nao existem em RECEIVABLE_METHODS. Normalizar o que e gravado
+    // transformaria tudo em "Outro" e quebraria o filtro de Forma.
+    const parcelas = buildSimpleSaleInstallments({
+      total: 900, installmentsCount: 3,
+      paymentMethod: "Plataforma", firstDueDate: "2026-07-27",
+    });
+    expect(parcelas.every(p => p.paymentMethod === "Plataforma")).toBe(true);
+    // Nao e cartao: cai no mesmo dia do vencimento.
+    expect(parcelas.map(p => p.cashDate)).toEqual(parcelas.map(p => p.dueDate));
   });
 
   it("Pix cai no mesmo dia do vencimento", () => {

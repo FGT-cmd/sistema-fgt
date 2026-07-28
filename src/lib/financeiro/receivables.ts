@@ -262,6 +262,14 @@ export function buildPreset(
  * ainda assim precisa POSTar `customInstallments`: sem elas a venda nasce
  * sem nenhuma parcela e não carrega dinheiro nenhum — não aparece nem no
  * faturamento nem no caixa, e sem erro na tela.
+ *
+ * A forma de pagamento é gravada **verbatim**, como o usuário escolheu.
+ * `toReceivableMethod` entra apenas para derivar a data de caixa: o
+ * vocabulário canônico é uma necessidade de `defaultCashDate`, não o rótulo
+ * do usuário. Formas legítimas fora de RECEIVABLE_METHODS — "Plataforma" e
+ * qualquer forma criada em Configurações — virariam "Outro" se fossem
+ * normalizadas na gravação, apagando o rótulo escolhido e quebrando o
+ * filtro de Forma em Lançamentos.
  */
 export function buildSimpleSaleInstallments(opts: {
   total: number;
@@ -269,7 +277,7 @@ export function buildSimpleSaleInstallments(opts: {
   paymentMethod: string;
   firstDueDate: string;
 }): ApiInstallment[] {
-  const method = toReceivableMethod(opts.paymentMethod);
+  const canonical = toReceivableMethod(opts.paymentMethod);
   const parcelas = Math.max(1, Math.floor(opts.installmentsCount) || 1);
 
   const lines = buildPreset("plan_installments", {
@@ -278,9 +286,9 @@ export function buildSimpleSaleInstallments(opts: {
     parcelas,
   }).map(line => ({
     ...line,
-    paymentMethod: method,
-    // buildPreset assume Pix; com a forma escolhida a data de caixa muda.
-    cashDate: defaultCashDate(line.dueDate, method),
+    paymentMethod: opts.paymentMethod,
+    // buildPreset assume Pix; a data de caixa segue a forma canônica.
+    cashDate: defaultCashDate(line.dueDate, canonical),
   }));
 
   return toApiInstallments(lines);

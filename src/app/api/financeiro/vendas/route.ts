@@ -48,13 +48,14 @@ export async function POST(req: NextRequest) {
     // Monta installments a partir dos dados customizados (sempre livres agora)
     type InstData = {
       number: number; amount: number; netValue?: number;
-      dueDate: Date; status: string; paidAt?: Date; label?: string;
+      dueDate: Date; cashDate?: Date; status: string; paidAt?: Date;
+      label?: string; paymentMethod?: string;
     };
     let installmentData: InstData[] = [];
 
     if (Array.isArray(customInstallments) && customInstallments.length > 0) {
       installmentData = customInstallments.map((inst: {
-        amount: string | number; dueDate: string;
+        amount: string | number; dueDate: string; cashDate?: string;
         netValue?: string | number; label?: string; paid?: boolean; paymentMethod?: string;
       }, i: number) => {
         const instPaid = isPaid || inst.paid === true;
@@ -65,9 +66,10 @@ export async function POST(req: NextRequest) {
           status:  instPaid ? "pago" : "pendente",
           label:   inst.label || undefined,
         };
-        if (inst.netValue) entry.netValue = parseFloat(String(inst.netValue));
-        if (inst.paymentMethod) (entry as Record<string, unknown>).paymentMethod = inst.paymentMethod;
-        if (instPaid) entry.paidAt = new Date();
+        if (inst.cashDate)      entry.cashDate      = new Date(String(inst.cashDate) + "T12:00");
+        if (inst.netValue)      entry.netValue      = parseFloat(String(inst.netValue));
+        if (inst.paymentMethod) entry.paymentMethod = inst.paymentMethod;
+        if (instPaid)           entry.paidAt        = new Date();
         return entry;
       });
     }

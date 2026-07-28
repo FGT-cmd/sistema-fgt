@@ -279,6 +279,7 @@ model Installment {
   amount        Float
   netValue      Float?    // valor líquido após taxas (cartão)
   dueDate       DateTime
+  cashDate      DateTime? // data de entrada real no caixa (default derivado da forma de pagamento)
   paidAt        DateTime?
   status        String    @default("pendente")
   label         String?   // rótulo livre: "Entrada", "1ª parcela", etc.

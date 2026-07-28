@@ -10,13 +10,17 @@ import {
   MessageSquare, Check, Circle, Zap, Star, ArrowRight, ListChecks,
   MessageCircle, Calendar, Loader2, Paperclip,
 } from "lucide-react";
+import { ReceivablesTable } from "@/components/financeiro/ReceivablesTable";
+import {
+  buildPreset, toApiInstallments, sumTotals, emptyLine, defaultCashDate,
+  type ReceivableLine, type PresetId,
+} from "@/lib/financeiro/receivables";
 
 // ─── Types ────────────────────────────────────────────────────────
 type ServicePlan = {
   id: string; name: string; description?: string | null;
   totalAmount: number; installments: number; durationMonths: number; active: boolean;
 };
-type InstallmentDraft = { amount: string; dueDate: string; label: string; netValue?: string; paid?: boolean };
 type NegotiationType = "cash" | "pix" | "card" | "custom";
 type Installment = { id: string; status: string; dueDate: string; paidAt?: string | null; amount: number; number: number; label?: string | null; netValue?: number | null; paymentMethod?: string | null };
 type Sale = {
@@ -103,14 +107,6 @@ function totalPendente(a: Aluno) { return a.sales.flatMap(s => s.installments).f
 
 const inputCls = "w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white";
 
-function nextBusinessDay(fromIso: string): string {
-  const d = new Date(fromIso + "T12:00:00");
-  d.setDate(d.getDate() + 1);
-  if (d.getDay() === 0) d.setDate(d.getDate() + 1);
-  if (d.getDay() === 6) d.setDate(d.getDate() + 2);
-  return d.toISOString().slice(0, 10);
-}
-
 function formatPhone(raw: string): string {
   const d = raw.replace(/\D/g, "").slice(0, 11);
   if (d.length <= 2) return d;
@@ -136,98 +132,22 @@ function AlunoPaymentForm({
   // Plano selecionado
   const [selectedPlanId, setSelectedPlanId] = useState("");
   const [customPlanName, setCustomPlanName] = useState("");
-  const [negType, setNegType] = useState<NegotiationType>("pix");
-  const [payMethod, setPayMethod] = useState(aluno.paymentMethod || "Pix");
   const [negotiationNotes, setNegotiationNotes] = useState(aluno.negotiationNotes || "");
 
-  // Número de parcelas controlável (independente do plano)
-  const [installmentCount, setInstallmentCount] = useState(1);
-
-  // Installments livres (cash/pix/custom)
-  const [installments, setInstallments] = useState<InstallmentDraft[]>([
-    { amount: "", dueDate: today, label: "Parcela 1" }
-  ]);
-
-  // Cartão — taxa é do aluno, você recebe o total; caixa = 1 dia útil após a venda
-  const [grossValue, setGrossValue] = useState("");
-  const [saleDate, setSaleDate]     = useState(today);
-  const [cashFlowDate, setCashDate] = useState(() => nextBusinessDay(today));
-  // Para cartão sem antecipação: parcelas editáveis com datas livres
-  const [cardInstallments, setCardInstallments] = useState<InstallmentDraft[]>([
-    { amount: "", dueDate: today, label: "Parcela 1" }
-  ]);
+  // Recebimentos por linha — cada linha tem sua própria forma de pagamento,
+  // data combinada com o aluno e data real de entrada no caixa.
+  const [lines, setLines] = useState<ReceivableLine[]>(() => [emptyLine(today)]);
+  const [presetTotal, setPresetTotal] = useState("");
+  const [presetEntry, setPresetEntry] = useState("");
+  const [presetParcelas, setPresetParcelas] = useState(2);
 
   const plan = plans.find(p => p.id === selectedPlanId);
 
-  // Reseta installments ao trocar tipo de negociação
-  function changeNegType(t: NegotiationType) {
-    setNegType(t);
-    if (t === "cash") {
-      setInstallments([{ amount: grossValue || "", dueDate: today, label: "Pagamento" }]);
-    } else if (t === "pix" || t === "custom") {
-      // Mantém o que já tem ou reseta para 1 linha
-      if (installments.length === 0 || (installments.length === 1 && !installments[0].amount)) {
-        setInstallments([{ amount: grossValue || "", dueDate: today, label: "Parcela 1" }]);
-      }
-    } else if (t === "card") {
-      // Sincroniza cardInstallments com o plano se houver
-      if (plan) {
-        const per = parseFloat((plan.totalAmount / plan.installments).toFixed(2));
-        setCardInstallments(Array.from({ length: plan.installments }, (_, i) => ({
-          amount:  String(per),
-          dueDate: today,
-          label:   `Parcela ${i + 1}`,
-        })));
-      }
-    }
-  }
-
-  // Distribui o total em N parcelas iguais
-  function distributeInstallments(total: number, count: number) {
-    const per = parseFloat((total / count).toFixed(2));
-    const makeLabel = (i: number) => count === 1 ? "Pagamento" : i === 0 ? "1ª parcela" : `${i + 1}ª parcela`;
-    return Array.from({ length: count }, (_, i) => ({
-      amount: String(per), dueDate: today, label: makeLabel(i),
-    }));
-  }
-
-  // Auto-preenche ao selecionar plano — NÃO bloqueia quantidade de parcelas
+  // Auto-preenche o valor total sugerido ao selecionar um plano.
   function applyPlan(p: ServicePlan) {
     setSelectedPlanId(p.id);
     setCustomPlanName("");
-    setGrossValue(String(p.totalAmount));
-    // Usa installmentCount atual, não o padrão do plano
-    const count = installmentCount || p.installments;
-    setInstallmentCount(count);
-    if (negType === "pix" || negType === "cash" || negType === "custom") {
-      setInstallments(distributeInstallments(p.totalAmount, count));
-    } else if (negType === "card") {
-      setCardInstallments(distributeInstallments(p.totalAmount, count));
-    }
-  }
-
-  // Redistribui quando o usuário muda o número de parcelas
-  function changeInstallmentCount(newCount: number) {
-    const n = Math.max(1, Math.min(60, newCount));
-    setInstallmentCount(n);
-    const total = parseFloat(grossValue.replace(",", ".")) || 0;
-    if (total > 0) {
-      if (negType !== "card") {
-        setInstallments(distributeInstallments(total, n));
-      } else {
-        setCardInstallments(distributeInstallments(total, n));
-      }
-    } else {
-      // Sem total definido: apenas ajusta o número de linhas
-      const makeLabel = (i: number) => n === 1 ? "Pagamento" : `${i + 1}ª parcela`;
-      if (negType !== "card") {
-        setInstallments(Array.from({ length: n }, (_, i) => ({
-          amount: installments[i]?.amount || "",
-          dueDate: installments[i]?.dueDate || today,
-          label: installments[i]?.label || makeLabel(i),
-        })));
-      }
-    }
+    setPresetTotal(String(p.totalAmount));
   }
 
   // IA
@@ -240,74 +160,54 @@ function AlunoPaymentForm({
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           texto: negotiationNotes,
-          serviceValue: grossValue || plan?.totalAmount,
+          serviceValue: presetTotal || plan?.totalAmount,
           planName: plan?.name || customPlanName,
-          paymentMethod: payMethod,
+          paymentMethod: aluno.paymentMethod || "Pix",
         }),
       });
       const data = await res.json();
       if (data.customInstallments?.length) {
-        setInstallments(data.customInstallments.map((i: { amount: number; dueDate: string; label?: string }, idx: number) => ({
-          amount:  String(i.amount),
-          dueDate: i.dueDate,
-          label:   i.label || `${idx + 1}ª parcela`,
-        })));
-        if (data.totalAmount) setGrossValue(String(data.totalAmount));
-        if (data.paymentMethod) setPayMethod(data.paymentMethod);
+        setLines(data.customInstallments.map((i: {
+          amount: number; dueDate: string; label?: string; paymentMethod?: string;
+        }, idx: number) => {
+          const base = emptyLine(i.dueDate);
+          const method = i.paymentMethod || data.paymentMethod || "Pix";
+          return {
+            ...base,
+            amount:        String(i.amount),
+            dueDate:       i.dueDate,
+            cashDate:      defaultCashDate(i.dueDate, method),
+            paymentMethod: method,
+            label:         i.label || `${idx + 1}ª parcela`,
+          };
+        }));
         if (data.summary) setAiSummary(data.summary);
-        if (negType === "cash" || negType === "custom") setNegType("pix");
       }
     } finally {
       setAnalyzing(false);
     }
   }
 
-  function addInstallment() {
-    const last = installments[installments.length - 1];
-    setInstallments(prev => [...prev, {
-      amount:  last?.amount || "",
-      dueDate: today,
-      label:   `${prev.length + 1}ª parcela`,
-    }]);
-  }
-
-  function removeInstallment(idx: number) {
-    setInstallments(prev => prev.filter((_, i) => i !== idx));
-  }
-
-  function updateInstallment(idx: number, field: keyof InstallmentDraft, value: string | boolean) {
-    setInstallments(prev => prev.map((inst, i) => i === idx ? { ...inst, [field]: value } : inst));
-  }
-
   async function handleSave() {
     const descricao = plan?.name || customPlanName || "Plano";
+    const parcelas  = toApiInstallments(lines);
+    if (parcelas.length === 0) return;
+
+    const totals = sumTotals(lines);
     const body: Record<string, unknown> = {
-      clientId:         aluno.id,
-      description:      descricao,
-      negotiationType:  negType,
-      paymentMethod:    payMethod,
-      negotiationNotes: negotiationNotes || null,
-      servicePlanId:    selectedPlanId || null,
+      clientId:           aluno.id,
+      description:        descricao,
+      negotiationNotes:   negotiationNotes || null,
+      servicePlanId:      selectedPlanId || null,
+      totalAmount:        totals.faturamento,
+      grossValue:         totals.faturamento,
+      netValue:           totals.caixa,
+      customInstallments: parcelas,
+      // Rótulo descritivo apenas; não controla mais a lógica de exibição.
+      negotiationType:    parcelas.length === 1 ? "cash" : "custom",
+      paymentMethod:      parcelas[0].paymentMethod,
     };
 
-    if (negType === "card") {
-      const gross = parseFloat(grossValue.replace(",", ".")) || 0;
-      if (!gross) return;
-      body.totalAmount  = gross;
-      body.grossValue   = gross;
-      body.netValue     = gross; // taxa é do aluno, valor recebido = total
-      body.cashFlowDate = cashFlowDate;
-      body.customInstallments = [{ amount: gross, dueDate: cashFlowDate, label: "Cartão — entrada no caixa", paid: false }];
-    } else {
-      const total = installments.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
-      if (!total) return;
-      body.totalAmount        = total;
-      body.customInstallments = installments
-        .filter(i => parseFloat(i.amount) > 0)
-        .map(i => ({ ...i, amount: parseFloat(i.amount) }));
-    }
-
-    if (!body.totalAmount) return;
     setSaving(true);
     try {
       const res = await fetch("/api/financeiro/vendas", {
@@ -322,18 +222,7 @@ function AlunoPaymentForm({
     }
   }
 
-  const totalInstallments = installments.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
-  const totalCard = parseFloat(grossValue.replace(",", ".")) || 0;
-
-  // Resumo antes de salvar
-  function getResumo() {
-    if (negType === "card") {
-      const gross = totalCard;
-      return { faturamento: gross, caixa: gross, parcelas: 1, cashDate: cashFlowDate };
-    }
-    return { faturamento: totalInstallments, caixa: totalInstallments, parcelas: installments.filter(i => parseFloat(i.amount) > 0).length, cashDate: null };
-  }
-  const resumo = getResumo();
+  const totals = sumTotals(lines);
   const inputClsLocal = "w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 bg-white";
   const inputSmCls = "border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-indigo-400 bg-white";
 
@@ -376,197 +265,54 @@ function AlunoPaymentForm({
         )}
       </div>
 
-      {/* Seção 2 — Tipo de negociação */}
       <div>
-        <p className="text-[11px] font-bold text-gray-400 uppercase mb-2">Tipo de negociação</p>
-        <div className="grid grid-cols-2 gap-2">
-          {NEG_TYPES.map(t => (
-            <button key={t.value} onClick={() => changeNegType(t.value)}
-              className={`text-left px-3 py-2 rounded-xl border text-sm transition-all ${
-                negType === t.value
-                  ? "border-indigo-500 bg-indigo-50 text-indigo-700"
-                  : "border-gray-200 hover:border-indigo-300 text-gray-700"
-              }`}>
-              <p className="font-semibold">{t.label}</p>
-              <p className="text-[10px] text-gray-400">{t.desc}</p>
+        <p className="text-[11px] font-bold text-gray-400 uppercase mb-2">Como vai receber</p>
+
+        <div className="flex flex-wrap gap-2 items-end mb-3">
+          <label className="text-[11px] text-gray-500">
+            Valor total
+            <input type="text" inputMode="decimal" value={presetTotal} placeholder="0,00"
+              onChange={e => setPresetTotal(e.target.value)}
+              className={`${inputSmCls} w-28 block mt-0.5`} />
+          </label>
+          <label className="text-[11px] text-gray-500">
+            Entrada
+            <input type="text" inputMode="decimal" value={presetEntry} placeholder="0,00"
+              onChange={e => setPresetEntry(e.target.value)}
+              className={`${inputSmCls} w-28 block mt-0.5`} />
+          </label>
+          <label className="text-[11px] text-gray-500">
+            Parcelas
+            <select value={presetParcelas} onChange={e => setPresetParcelas(Number(e.target.value))}
+              className={`${inputSmCls} w-20 block mt-0.5`}>
+              <option value={2}>2</option>
+              <option value={3}>3</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {([
+            ["card_full",             "Total no cartão"],
+            ["pix_full",              "Pix à vista"],
+            ["entry_pix_installments","Entrada + parcelas Pix"],
+            ["entry_then_card",       "Entrada + cartão depois"],
+            ["entry_then_pix",        "Entrada + Pix depois"],
+          ] as [PresetId, string][]).map(([id, label]) => (
+            <button key={id} type="button"
+              onClick={() => setLines(buildPreset(id, {
+                total:       parseFloat(presetTotal.replace(",", ".")) || 0,
+                startDate:   today,
+                entryAmount: parseFloat(presetEntry.replace(",", ".")) || 0,
+                parcelas:    presetParcelas,
+              }))}
+              className="px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-700 hover:border-indigo-400 hover:text-indigo-600 bg-white">
+              {label}
             </button>
           ))}
         </div>
-      </div>
 
-      {/* Seção 3 — Condições */}
-      <div>
-        <p className="text-[11px] font-bold text-gray-400 uppercase mb-2">Condições financeiras</p>
-
-        {/* Forma de pagamento */}
-        <div className="flex gap-2 mb-3 flex-wrap">
-          {PAYMENT_METHODS.map(m => (
-            <button key={m} onClick={() => setPayMethod(m)}
-              className={`px-3 py-1 rounded-lg text-xs font-semibold border transition-colors ${
-                payMethod === m ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-200 text-gray-600 hover:border-indigo-300"
-              }`}>{m}</button>
-          ))}
-        </div>
-
-        {/* À VISTA */}
-        {negType === "cash" && (
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="block text-[10px] font-semibold text-gray-500 mb-1">Valor</label>
-                <input value={installments[0]?.amount || ""} type="number" step="0.01"
-                  onChange={e => updateInstallment(0, "amount", e.target.value)}
-                  placeholder="0,00" className={inputClsLocal}/>
-              </div>
-              <div>
-                <label className="block text-[10px] font-semibold text-gray-500 mb-1">Data do pagamento</label>
-                <input type="date" value={installments[0]?.dueDate || today}
-                  onChange={e => updateInstallment(0, "dueDate", e.target.value)}
-                  className={inputClsLocal}/>
-              </div>
-            </div>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={!!installments[0]?.paid}
-                onChange={e => updateInstallment(0, "paid", e.target.checked)}
-                className="accent-indigo-600"/>
-              <span className="text-xs text-gray-700 font-medium">Já recebi — marcar como pago</span>
-            </label>
-          </div>
-        )}
-
-        {/* PIX PARCELADO ou PERSONALIZADO */}
-        {(negType === "pix" || negType === "custom") && (
-          <div className="space-y-2">
-            {/* Valor total (referência para redistribuição) */}
-            <div className="grid grid-cols-2 gap-2 mb-1">
-              <div>
-                <label className="block text-[10px] font-semibold text-gray-500 mb-1">Valor total da negociação</label>
-                <input type="number" step="0.01" value={grossValue}
-                  onChange={e => setGrossValue(e.target.value)}
-                  placeholder="R$" className={inputClsLocal}/>
-              </div>
-            </div>
-            {/* Controle de quantidade de parcelas */}
-            <div className="flex items-center gap-3 p-2 bg-gray-50 rounded-xl border border-gray-200">
-              <span className="text-xs text-gray-500 font-medium shrink-0">Nº de parcelas:</span>
-              <div className="flex items-center gap-1">
-                <button onClick={() => changeInstallmentCount(installmentCount - 1)}
-                  className="w-6 h-6 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-200 flex items-center justify-center text-sm font-bold">−</button>
-                <input type="number" min="1" max="60" value={installmentCount}
-                  onChange={e => changeInstallmentCount(parseInt(e.target.value) || 1)}
-                  className="w-12 text-center border border-gray-200 rounded-lg py-0.5 text-sm font-bold focus:outline-none focus:border-indigo-400" />
-                <button onClick={() => changeInstallmentCount(installmentCount + 1)}
-                  className="w-6 h-6 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-200 flex items-center justify-center text-sm font-bold">+</button>
-              </div>
-              {parseFloat(grossValue.replace(",", ".")) > 0 && (
-                <button onClick={() => changeInstallmentCount(installmentCount)}
-                  className="text-xs text-indigo-600 hover:underline ml-auto">Redistribuir</button>
-              )}
-            </div>
-            {installments.map((inst, idx) => (
-              <div key={idx} className="bg-white rounded-xl border border-gray-200 p-3 space-y-2.5 shadow-sm">
-                {/* Linha 1 — número + nome + delete */}
-                <div className="flex items-center gap-2">
-                  <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 text-[11px] font-bold flex items-center justify-center shrink-0">
-                    {idx + 1}
-                  </span>
-                  <input
-                    value={inst.label}
-                    onChange={e => updateInstallment(idx, "label", e.target.value)}
-                    placeholder={`${idx + 1}ª parcela`}
-                    className="flex-1 text-sm font-medium text-gray-800 bg-transparent border-0 border-b border-gray-200 pb-0.5 focus:outline-none focus:border-indigo-400 placeholder-gray-300"
-                  />
-                  <button
-                    onClick={() => removeInstallment(idx)}
-                    className="text-gray-300 hover:text-red-400 shrink-0 p-0.5 rounded hover:bg-red-50 transition-colors">
-                    <X className="w-3.5 h-3.5"/>
-                  </button>
-                </div>
-                {/* Linha 2 — valor + data + pago */}
-                <div className="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
-                  <div>
-                    <label className="block text-[10px] font-semibold text-gray-400 mb-1 uppercase tracking-wide">Valor</label>
-                    <input
-                      type="number" step="0.01" value={inst.amount}
-                      onChange={e => updateInstallment(idx, "amount", e.target.value)}
-                      placeholder="0,00"
-                      className="w-full border border-gray-200 rounded-lg px-2.5 py-2 text-sm font-semibold text-gray-800 focus:outline-none focus:border-indigo-400 bg-gray-50"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-semibold text-gray-400 mb-1 uppercase tracking-wide">Vencimento</label>
-                    <input
-                      type="date" value={inst.dueDate}
-                      onChange={e => updateInstallment(idx, "dueDate", e.target.value)}
-                      className="w-full border border-indigo-200 rounded-lg px-2.5 py-2 text-sm font-medium text-indigo-700 bg-indigo-50 focus:outline-none focus:border-indigo-500 focus:bg-white transition-colors"
-                    />
-                  </div>
-                  <label className="flex items-center gap-1.5 cursor-pointer pb-0.5">
-                    <input
-                      type="checkbox" checked={!!inst.paid}
-                      onChange={e => updateInstallment(idx, "paid", e.target.checked)}
-                      className="accent-green-600 w-3.5 h-3.5"/>
-                    <span className="text-[11px] text-gray-500 font-medium">Pago</span>
-                  </label>
-                </div>
-              </div>
-            ))}
-            <button onClick={addInstallment}
-              className="flex items-center gap-1 text-xs text-indigo-600 hover:underline mt-1">
-              <Plus className="w-3.5 h-3.5"/> Adicionar parcela
-            </button>
-            {totalInstallments > 0 && (
-              <div className="flex justify-between text-sm font-semibold border-t border-gray-100 pt-2 mt-2">
-                <span className="text-gray-600">Total</span>
-                <span className="text-indigo-700">{fmt(totalInstallments)}</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* CARTÃO — taxa é do aluno, você recebe o total em 1 dia útil */}
-        {negType === "card" && (
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="block text-[10px] font-semibold text-gray-500 mb-1">Valor total da venda</label>
-                <input type="number" step="0.01" value={grossValue}
-                  onChange={e => setGrossValue(e.target.value)}
-                  placeholder="R$" className={inputClsLocal}/>
-              </div>
-              <div>
-                <label className="block text-[10px] font-semibold text-gray-500 mb-1">Data da venda</label>
-                <input type="date" value={saleDate}
-                  onChange={e => { setSaleDate(e.target.value); setCashDate(nextBusinessDay(e.target.value)); }}
-                  className={inputClsLocal}/>
-              </div>
-            </div>
-
-            <div className="p-3 bg-blue-50 rounded-xl border border-blue-200">
-              <p className="text-xs font-semibold text-blue-700 mb-2">Entrada no caixa</p>
-              <div className="grid grid-cols-2 gap-2 items-end">
-                <div>
-                  <label className="block text-[10px] font-semibold text-gray-500 mb-1">Data de entrada no caixa</label>
-                  <input type="date" value={cashFlowDate}
-                    onChange={e => setCashDate(e.target.value)}
-                    className={inputClsLocal}/>
-                </div>
-                <div>
-                  <p className="text-[10px] text-blue-600 leading-tight">
-                    Calculado automaticamente como 1 dia útil após a venda. Edite se necessário.
-                  </p>
-                </div>
-              </div>
-              {grossValue && parseFloat(grossValue) > 0 && (
-                <div className="mt-2 pt-2 border-t border-blue-200 flex items-center justify-between text-xs text-blue-700">
-                  <span>Valor que entra no caixa:</span>
-                  <span className="font-bold text-sm">{fmt(parseFloat(grossValue))}</span>
-                </div>
-              )}
-            </div>
-            <p className="text-[10px] text-gray-400">A taxa é repassada ao aluno — você recebe o valor total da venda.</p>
-          </div>
-        )}
+        <ReceivablesTable lines={lines} onChange={setLines} startDate={today} />
       </div>
 
       {/* IA */}
@@ -578,7 +324,7 @@ function AlunoPaymentForm({
             className={`${inputClsLocal} resize-none pr-28`}/>
           <div className="absolute right-2 bottom-2 flex gap-1">
             {aiSummary && (
-              <button onClick={() => { setAiSummary(""); setInstallments([{ amount: "", dueDate: today, label: "Parcela 1" }]); }}
+              <button onClick={() => { setAiSummary(""); setLines([emptyLine(today)]); }}
                 title="Limpar leitura IA"
                 className="text-[10px] px-2 py-1 rounded-lg bg-gray-200 text-gray-600 hover:bg-gray-300">
                 Limpar
@@ -599,48 +345,12 @@ function AlunoPaymentForm({
         )}
       </div>
 
-      {/* Resumo antes de salvar */}
-      {(resumo.faturamento > 0) && (
-        <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 space-y-2">
-          <p className="text-[11px] font-bold text-gray-400 uppercase">Resumo da negociação</p>
-          <div className="grid grid-cols-3 gap-2 text-center">
-            <div className="bg-white rounded-lg p-2 border border-gray-100">
-              <p className="text-[10px] text-gray-400 uppercase font-bold">Faturamento</p>
-              <p className="text-sm font-bold text-indigo-700">{fmt(resumo.faturamento)}</p>
-            </div>
-            <div className="bg-white rounded-lg p-2 border border-gray-100">
-              <p className="text-[10px] text-gray-400 uppercase font-bold">Caixa</p>
-              <p className={`text-sm font-bold ${resumo.caixa < resumo.faturamento ? "text-amber-600" : "text-green-700"}`}>
-                {fmt(resumo.caixa)}
-              </p>
-            </div>
-            <div className="bg-white rounded-lg p-2 border border-gray-100">
-              <p className="text-[10px] text-gray-400 uppercase font-bold">Parcelas</p>
-              <p className="text-sm font-bold text-gray-700">{resumo.parcelas}x</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 text-xs text-gray-500 flex-wrap">
-            <span className="font-medium">{plan?.name || customPlanName || "Personalizado"}</span>
-            <span>·</span>
-            <span>{payMethod}</span>
-            <span>·</span>
-            <span>{negType === "card" ? "Cartão" : negType === "pix" ? "PIX parcelado" : negType === "cash" ? "À vista" : "Personalizado"}</span>
-            {resumo.cashDate && negType === "card" && (
-              <>
-                <span>·</span>
-                <span className="text-blue-600 font-medium">Caixa em {fmtDate(resumo.cashDate)}</span>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* Botões */}
       <div className="flex gap-2 pt-1">
         <button onClick={onCancel} className="flex-1 py-2 rounded-xl text-sm border border-gray-200 text-gray-600 hover:bg-gray-50">
           Cancelar
         </button>
-        <button onClick={handleSave} disabled={saving || resumo.faturamento === 0}
+        <button onClick={handleSave} disabled={saving || totals.faturamento === 0}
           className="flex-1 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
           style={{ background: "#6366f1" }}>
           {saving ? "Salvando..." : "Salvar e enviar ao Financeiro"}

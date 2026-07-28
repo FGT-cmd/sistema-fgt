@@ -7,7 +7,7 @@ import {
   UserPlus, AlertTriangle, Clock, Filter, TrendingUp, BarChart2,
 } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/utils";
-import { defaultCashDate, toReceivableMethod } from "@/lib/financeiro/receivables";
+import { addMonths, defaultCashDate, toReceivableMethod } from "@/lib/financeiro/receivables";
 
 // ─── Pipeline stages ─────────────────────────────────────────────────────────
 
@@ -368,12 +368,11 @@ function ConvertModal({ deal, onClose, onDone }: { deal: Deal; onClose: () => vo
     if (student.id) {
       const count = parseInt(payment.installments) || 1;
       const perParcela = parseFloat(payment.totalAmount) / count;
-      const firstDue = new Date(payment.firstDueDate + "T12:00:00");
       const metodo = toReceivableMethod(payment.paymentMethod || "Pix");
       const customInstallments = Array.from({ length: count }, (_, i) => {
-        const d = new Date(firstDue);
-        d.setMonth(d.getMonth() + i);
-        const dueIso = d.toISOString().slice(0, 10);
+        // addMonths clampa o dia na virada de mês (31/01 + 1 = 28/02).
+        // setMonth cru transbordava e gerava vencimentos duplicados.
+        const dueIso = addMonths(payment.firstDueDate, i);
         return {
           amount: perParcela,
           netValue: perParcela,

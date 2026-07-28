@@ -6,7 +6,7 @@
 import { prisma } from "@/lib/prisma";
 import Anthropic from "@anthropic-ai/sdk";
 import { findClientMatches } from "@/lib/whatsapp/executor";
-import { defaultCashDate, toReceivableMethod } from "@/lib/financeiro/receivables";
+import { addMonths, defaultCashDate, toReceivableMethod } from "@/lib/financeiro/receivables";
 import type {
   OCCreateStudentData, OCRegisterPaymentData, OCCreateTaskData,
   OCAddStudentNoteData, OCSaveContentIdeaData, OCEnriched, OCQueryType,
@@ -255,11 +255,14 @@ export async function createStudent(
       },
     });
 
+    const startIso = toLocalIsoDate(today);
+
     for (let i = 1; i <= enriched.planInstallments; i++) {
-      const dueDate = new Date(today);
-      dueDate.setMonth(dueDate.getMonth() + (i - 1));
-      dueDate.setDate(today.getDate()); // mesmo dia do mês
-      const cashIso = defaultCashDate(toLocalIsoDate(dueDate), metodo);
+      // addMonths clampa o dia na virada de mês (31/01 + 1 = 28/02).
+      // setMonth cru transbordava e gerava vencimentos duplicados.
+      const dueIso  = addMonths(startIso, i - 1);
+      const dueDate = new Date(dueIso + "T12:00");
+      const cashIso = defaultCashDate(dueIso, metodo);
       await prisma.installment.create({
         data: {
           number: i,

@@ -9,6 +9,8 @@ import {
   toApiInstallments,
   toNumber,
   toReceivableMethod,
+  addMonths,
+  buildSimpleSaleInstallments,
   type ReceivableLine,
 } from "./receivables";
 
@@ -370,5 +372,87 @@ describe("toNumber", () => {
 
   it("interpreta ponto como decimal quando nao segue o padrao de milhares", () => {
     expect(toNumber("1.5")).toBe(1.5);
+  });
+});
+
+describe("addMonths", () => {
+  it("mantem o mesmo dia quando o mes seguinte tem esse dia", () => {
+    expect(addMonths("2026-07-27", 1)).toBe("2026-08-27");
+  });
+
+  it("nao altera a data com zero meses", () => {
+    expect(addMonths("2026-01-31", 0)).toBe("2026-01-31");
+  });
+
+  it("clampa 31/01 em 3x para tres datas distintas e corretas", () => {
+    // Regressao: setMonth sem clamp gerava 31/01, 31/03, 31/03 —
+    // fevereiro pulado e marco duplicado.
+    const datas = [0, 1, 2].map(i => addMonths("2026-01-31", i));
+    expect(datas).toEqual(["2026-01-31", "2026-02-28", "2026-03-31"]);
+    expect(new Set(datas).size).toBe(3);
+  });
+
+  it("clampa para 29/02 em ano bissexto", () => {
+    expect(addMonths("2024-01-31", 1)).toBe("2024-02-29");
+  });
+
+  it("atravessa a virada de ano", () => {
+    expect(addMonths("2026-12-15", 1)).toBe("2027-01-15");
+  });
+});
+
+describe("buildSimpleSaleInstallments", () => {
+  it("gera uma linha por parcela e fecha o total", () => {
+    const parcelas = buildSimpleSaleInstallments({
+      total: 3600, installmentsCount: 3,
+      paymentMethod: "Pix", firstDueDate: "2026-07-27",
+    });
+    expect(parcelas).toHaveLength(3);
+    expect(parcelas.reduce((s, p) => s + p.amount, 0)).toBe(3600);
+    expect(parcelas.every(p => p.netValue === p.amount)).toBe(true);
+  });
+
+  it("espaca os vencimentos mensalmente com clamp de dia", () => {
+    const parcelas = buildSimpleSaleInstallments({
+      total: 300, installmentsCount: 3,
+      paymentMethod: "Pix", firstDueDate: "2026-01-31",
+    });
+    expect(parcelas.map(p => p.dueDate)).toEqual(["2026-01-31", "2026-02-28", "2026-03-31"]);
+  });
+
+  it("normaliza a forma de pagamento e deriva a data de caixa", () => {
+    const parcelas = buildSimpleSaleInstallments({
+      total: 1000, installmentsCount: 1,
+      paymentMethod: "Cartão de Crédito", firstDueDate: "2026-07-27",
+    });
+    expect(parcelas[0].paymentMethod).toBe("Cartão");
+    // Cartão cai em um dia útil; 2026-07-27 é segunda.
+    expect(parcelas[0].cashDate).toBe("2026-07-28");
+  });
+
+  it("Pix cai no mesmo dia do vencimento", () => {
+    const parcelas = buildSimpleSaleInstallments({
+      total: 1000, installmentsCount: 1,
+      paymentMethod: "Pix", firstDueDate: "2026-07-27",
+    });
+    expect(parcelas[0].cashDate).toBe("2026-07-27");
+  });
+
+  it("nunca devolve lista vazia para um total valido", () => {
+    // C1: uma venda sem parcelas nao carrega dinheiro nenhum e some do
+    // financeiro sem erro. Uma contagem invalida vira 1 parcela.
+    const parcelas = buildSimpleSaleInstallments({
+      total: 3600, installmentsCount: 0,
+      paymentMethod: "Pix", firstDueDate: "2026-07-27",
+    });
+    expect(parcelas).toHaveLength(1);
+    expect(parcelas[0].amount).toBe(3600);
+  });
+
+  it("total zerado nao gera parcelas", () => {
+    expect(buildSimpleSaleInstallments({
+      total: 0, installmentsCount: 3,
+      paymentMethod: "Pix", firstDueDate: "2026-07-27",
+    })).toEqual([]);
   });
 });

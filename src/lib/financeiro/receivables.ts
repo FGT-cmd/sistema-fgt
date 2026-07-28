@@ -107,8 +107,13 @@ export function nextBusinessDay(iso: string): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** Mesma data, N meses à frente. Fixa overflow de dia (ex: Jan 31 + 1 mês = Feb 28). */
-function addMonths(iso: string, months: number): string {
+/**
+ * Mesma data, N meses à frente. Fixa overflow de dia (ex: Jan 31 + 1 mês =
+ * Feb 28). É a ÚNICA aritmética de mês do sistema: `setMonth` sem clamp
+ * transborda (31/01 + 1 mês vira 03/03), o que gera vencimentos duplicados
+ * e meses pulados.
+ */
+export function addMonths(iso: string, months: number): string {
   const d = new Date(iso + "T12:00:00");
   const sourceDay = d.getDate();
   d.setMonth(d.getMonth() + months);
@@ -247,6 +252,38 @@ export function buildPreset(
     }));
   }
   return lines;
+}
+
+/**
+ * Payload de uma venda simples "valor total em N parcelas iguais", com uma
+ * única forma de pagamento para todas as linhas.
+ *
+ * Existe porque um formulário que só informa total/nº de parcelas/forma
+ * ainda assim precisa POSTar `customInstallments`: sem elas a venda nasce
+ * sem nenhuma parcela e não carrega dinheiro nenhum — não aparece nem no
+ * faturamento nem no caixa, e sem erro na tela.
+ */
+export function buildSimpleSaleInstallments(opts: {
+  total: number;
+  installmentsCount: number;
+  paymentMethod: string;
+  firstDueDate: string;
+}): ApiInstallment[] {
+  const method = toReceivableMethod(opts.paymentMethod);
+  const parcelas = Math.max(1, Math.floor(opts.installmentsCount) || 1);
+
+  const lines = buildPreset("plan_installments", {
+    total:     opts.total,
+    startDate: opts.firstDueDate,
+    parcelas,
+  }).map(line => ({
+    ...line,
+    paymentMethod: method,
+    // buildPreset assume Pix; com a forma escolhida a data de caixa muda.
+    cashDate: defaultCashDate(line.dueDate, method),
+  }));
+
+  return toApiInstallments(lines);
 }
 
 /** Converte as linhas da UI no payload aceito por POST /api/financeiro/vendas. */

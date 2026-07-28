@@ -8,6 +8,10 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { buildSaleTxs, type SaleInput } from "@/lib/financeiro/saleTxs";
+import { buildSimpleSaleInstallments, toNumber } from "@/lib/financeiro/receivables";
+import {
+  countsAsCaixa, countsAsFaturamento, sumCaixa, sumFaturamento,
+} from "@/lib/financeiro/aggregates";
 
 // ─── Types ────────────────────────────────────────────────────────
 type Tx = {
@@ -95,12 +99,11 @@ function monthStr(d: Date) { return `${d.getFullYear()}-${String(d.getMonth()+1)
 function isDerivedTxId(id: string) {
   return id.startsWith("inst_") || id.startsWith("rev_") || id.startsWith("fat_");
 }
-// Faturamento e Caixa são duas linhas com type:"receita" para a MESMA
-// parcela — somar por type sozinho conta o valor em dobro. Um lançamento
-// real (não derivado de venda) não tem _flow e deve contar nas duas
-// agregações, exatamente como sempre contou.
-function countsAsCaixa(t: Tx) { return t._flow == null || t._flow === "caixa"; }
-function countsAsFaturamento(t: Tx) { return t._flow == null || t._flow === "faturamento"; }
+// countsAsCaixa/countsAsFaturamento/sumCaixa/sumFaturamento vivem em
+// @/lib/financeiro/aggregates (com testes). Faturamento e Caixa são duas
+// linhas com type:"receita" para a MESMA parcela — somar por type sozinho
+// conta o valor em dobro. Toda agregação de receita nesta página passa por
+// esses helpers; nenhuma soma nova deve usar .reduce direto.
 
 // ─── StatusBadge ──────────────────────────────────────────────────
 function StatusBadge({ status, type, dueDate, onClick }: {
@@ -160,8 +163,10 @@ function EditTxModal({ tx, clients, incomeCats, expenseCats, recvMethods, payMet
   // A linha de Caixa (inst_) exibe o valor líquido/data de caixa, mas o
   // PATCH de parcela grava "amount"/"dueDate" direto no bruto/vencimento da
   // parcela. Pré-preenchendo com o bruto original (_grossAmount/
-  // _grossDueDate), um "Salvar" sem alterações vira um no-op de verdade em
-  // vez de sobrescrever o bruto com o líquido.
+  // _grossDueDate) evita que um "Salvar" sem alterações sobrescreva o bruto
+  // com o líquido. O status também é reenviado sempre, mas a rota de parcela
+  // só mexe em paidAt quando o status realmente transiciona — então um
+  // "Salvar" sem alterações é, de fato, um no-op.
   const editAmount = isVirtual ? (tx._grossAmount ?? tx.amount) : tx.amount;
   const editDueDate = isVirtual ? (tx._grossDueDate ?? tx.dueDate) : tx.dueDate;
 
@@ -184,7 +189,7 @@ function EditTxModal({ tx, clients, incomeCats, expenseCats, recvMethods, payMet
     setSaving(true);
     await onSave({
       description: form.description,
-      amount: parseFloat(form.amount.replace(",",".")),
+      amount: toNumber(form.amount),
       category: form.category,
       status: form.status,
       dueDate: form.dueDate || null,
@@ -307,7 +312,7 @@ function NovaDespesaModal({ expenseCats, payMethods, onClose, onSave }: {
     setSaving(true);
     const res = await fetch("/api/financeiro/lancamentos",{
       method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({...form,type:"despesa",amount:parseFloat(form.amount.replace(",","."))}),
+      body:JSON.stringify({...form,type:"despesa",amount:toNumber(form.amount)}),
     });
     onSave(await res.json());
     setSaving(false);
@@ -364,7 +369,7 @@ function NovaReceitaModal({ clients, incomeCats, recvMethods, onClose, onSave }:
     setSaving(true);
     const res = await fetch("/api/financeiro/lancamentos",{
       method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({...form,type:"receita",amount:parseFloat(form.amount.replace(",","."))}),
+      body:JSON.stringify({...form,type:"receita",amount:toNumber(form.amount)}),
     });
     onSave(await res.json());
     setSaving(false);
@@ -418,16 +423,37 @@ function NovaVendaModal({ clients, recvMethods, onClose, onSave }: {
   });
   const [saving, setSaving] = useState(false);
   const count = Math.max(1,parseInt(form.installmentsCount)||1);
-  const total = parseFloat(form.totalAmount.replace(",","."))||0;
+  const total = toNumber(form.totalAmount);
   const cls = "w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400";
+
+  // As linhas de recebimento são montadas aqui, não no servidor: a API só
+  // cria parcelas a partir de customInstallments. Sem elas a venda nasceria
+  // com zero parcelas — não carregaria dinheiro nenhum e sumiria do
+  // faturamento e do caixa, sem erro na tela.
+  const parcelas = buildSimpleSaleInstallments({
+    total,
+    installmentsCount: count,
+    paymentMethod:     form.paymentMethod,
+    firstDueDate:      form.firstDueDate,
+  });
 
   async function handleSave(e:React.FormEvent) {
     e.preventDefault();
-    if (!form.clientId) return;
+    if (!form.clientId||parcelas.length===0) return;
     setSaving(true);
     const res = await fetch("/api/financeiro/vendas",{
       method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({...form,totalAmount:total,installmentsCount:count}),
+      body:JSON.stringify({
+        ...form,
+        totalAmount:        total,
+        installmentsCount:  parcelas.length,
+        // Forma já normalizada para o vocabulário do app (ex: "Cartão de
+        // Crédito" → "Cartão"), a mesma gravada em cada parcela.
+        paymentMethod:      parcelas[0].paymentMethod,
+        customInstallments: parcelas,
+        // Rótulo descritivo apenas; não controla lógica de exibição.
+        negotiationType:    parcelas.length===1?"cash":"custom",
+      }),
     });
     onSave(await res.json());
     setSaving(false);
@@ -462,8 +488,8 @@ function NovaVendaModal({ clients, recvMethods, onClose, onSave }: {
         </div>
         <div className="flex gap-2 pt-2">
           <button type="button" onClick={onClose} className="flex-1 py-2 rounded-lg text-sm border border-gray-200 text-gray-600 hover:bg-gray-50">Cancelar</button>
-          <button type="submit" disabled={saving||!form.clientId} className="flex-1 py-2 rounded-lg text-sm font-semibold text-white bg-indigo-600 disabled:opacity-50">
-            {saving?"Criando...":`Criar ${count} parcela${count>1?"s":""}`}</button>
+          <button type="submit" disabled={saving||!form.clientId||parcelas.length===0} className="flex-1 py-2 rounded-lg text-sm font-semibold text-white bg-indigo-600 disabled:opacity-50">
+            {saving?"Criando...":`Criar ${parcelas.length||count} parcela${(parcelas.length||count)>1?"s":""}`}</button>
         </div>
       </form>
     </Modal>
@@ -769,17 +795,19 @@ function MesAtualTab({ allTxs, txs, monthDate, clients, incomeCats, expenseCats,
     setTimeout(()=>setSavedField(f=>f==="notes"?null:f),2000);
   }
 
-  // mRecs alimenta a tabela (mostra faturamento E caixa como linhas
-  // separadas, de propósito). Para os totais/saldos em dinheiro real,
-  // usamos mRecsCaixa — só a linha de Caixa de cada parcela — senão cada
-  // parcela de venda seria contada duas vezes (fat_ e inst_).
+  // mRecs traz as receitas do mês com as DUAS linhas de cada parcela
+  // (fat_ e inst_). A tabela de Recebimentos lista só as linhas de Caixa
+  // (mRecsCaixa): exibir as duas fazia cada venda aparecer duplicada — no
+  // Pix as linhas têm data e valor idênticos e só diferem pelo sufixo
+  // "(faturamento)", o que dá a impressão de recebimento em dobro. O
+  // faturamento do mês aparece como número próprio no cabeçalho da seção.
   const mRecs = allTxs.filter(t=>t.type==="receita"&&(inMonth(monthDate,t.dueDate)||inMonth(monthDate,t.paidAt)))
     .sort((a,b)=>new Date(txDate(a)||"").getTime()-new Date(txDate(b)||"").getTime());
   const mRecsCaixa = mRecs.filter(countsAsCaixa);
   const mDesp = txs.filter(t=>t.type==="despesa"&&(inMonth(monthDate,t.dueDate)||inMonth(monthDate,t.paidAt)))
     .sort((a,b)=>new Date(txDate(a)||"").getTime()-new Date(txDate(b)||"").getTime());
 
-  const entradas = mRecsCaixa.filter(t=>t.status==="pago").reduce((s,t)=>s+t.amount,0);
+  const entradas = sumCaixa(mRecs.filter(t=>t.status==="pago"));
   const saidas   = mDesp.filter(t=>t.status==="pago").reduce((s,t)=>s+t.amount,0);
   const saldoINum = parseFloat(saldoI.replace(",","."))||0;
   const saldoCalc = saldoINum+entradas-saidas;
@@ -790,7 +818,8 @@ function MesAtualTab({ allTxs, txs, monthDate, clients, incomeCats, expenseCats,
   const aReceber = mRecsCaixa.filter(t=>t.status!=="pago"&&t.status!=="cancelado");
   const vencidas = aReceber.filter(t=>isOverdue(t.status,t.dueDate));
 
-  const totalRec = mRecsCaixa.reduce((s,t)=>s+t.amount,0);
+  const totalRec = sumCaixa(mRecs);
+  const totalFat = sumFaturamento(mRecs);
   const totalDesp= mDesp.reduce((s,t)=>s+t.amount,0);
   const resultado= entradas-saidas;
   const margem   = entradas>0?(resultado/entradas)*100:null;
@@ -936,8 +965,15 @@ function MesAtualTab({ allTxs, txs, monthDate, clients, incomeCats, expenseCats,
 
       {/* Recebimentos */}
       <section>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-xs font-bold text-gray-500 uppercase tracking-wide">Recebimentos</h2>
+        <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+          <div className="flex items-baseline gap-3 flex-wrap">
+            <h2 className="text-xs font-bold text-gray-500 uppercase tracking-wide">Recebimentos</h2>
+            <span className="text-[11px] text-gray-400">
+              Caixa do mês <span className="font-bold text-green-600">{fmt(totalRec)}</span>
+              <span className="mx-1.5 text-gray-300">·</span>
+              Faturamento do mês <span className="font-bold text-indigo-600">{fmt(totalFat)}</span>
+            </span>
+          </div>
           <div className="flex gap-2">
             <button onClick={()=>setModal("receita")} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-green-600 hover:bg-green-700">
               <Plus className="w-3 h-3"/> Receita</button>
@@ -945,7 +981,11 @@ function MesAtualTab({ allTxs, txs, monthDate, clients, incomeCats, expenseCats,
               <Plus className="w-3 h-3"/> Nova Venda</button>
           </div>
         </div>
-        <TxTable txs={mRecs} type="receita" onToggle={onToggle} onDelete={onDelete} onEdit={tx=>{setEditTx(tx);onEditTx(tx);}}/>
+        <p className="text-[11px] text-gray-400 mb-2">
+          A tabela lista as entradas de caixa (valor líquido, na data de crédito).
+          As linhas de faturamento entram no total acima e aparecem detalhadas na aba Lançamentos.
+        </p>
+        <TxTable txs={mRecsCaixa} type="receita" onToggle={onToggle} onDelete={onDelete} onEdit={tx=>{setEditTx(tx);onEditTx(tx);}}/>
       </section>
 
       {/* Pagamentos */}
@@ -997,9 +1037,9 @@ function TxTable({txs,type,onToggle,onDelete,onEdit}:{
     </div>
   );
   const isIncome = type==="receita";
-  // txs traz faturamento e caixa como linhas separadas (de propósito, para
-  // exibição). O rodapé soma dinheiro em conta — só a linha de Caixa conta,
-  // senão cada parcela de venda seria somada duas vezes.
+  // O rodapé soma dinheiro em conta. A tabela de receitas já recebe só as
+  // linhas de Caixa, mas o filtro fica como rede de segurança: se um dia
+  // uma linha de faturamento chegar aqui, ela não pode dobrar o total.
   const summable = isIncome ? txs.filter(countsAsCaixa) : txs;
   const totalAll = summable.reduce((s,t)=>s+t.amount,0);
   const totalPago = summable.filter(t=>t.status==="pago").reduce((s,t)=>s+t.amount,0);
@@ -1337,7 +1377,7 @@ function LancamentosTab({ allTxs, txs, clients, incomeCats, expenseCats, recvMet
 
   // filtered ainda lista faturamento e caixa como linhas separadas para
   // exibição; o total de Entradas é dinheiro em conta, então soma só Caixa.
-  const totE = filtered.filter(t=>t.type==="receita"&&countsAsCaixa(t)).reduce((s,t)=>s+t.amount,0);
+  const totE = sumCaixa(filtered.filter(t=>t.type==="receita"));
   const totS = filtered.filter(t=>t.type==="despesa").reduce((s,t)=>s+t.amount,0);
 
   const sCls = "border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-indigo-400 bg-white";

@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getDefaultUser } from "@/lib/user";
+import {
+  buildInstallmentCreateData,
+  type CustomInstallmentInput,
+} from "@/lib/financeiro/saleInstallments";
 
 export async function GET(req: NextRequest) {
   try {
@@ -42,37 +46,11 @@ export async function POST(req: NextRequest) {
 
     const amount  = parseFloat(String(totalAmount));
     const isPaid  = markAllPaid === true;
-    const paidAt  = isPaid ? new Date() : undefined;
-    const status  = isPaid ? "pago" : "pendente";
 
     // Monta installments a partir dos dados customizados (sempre livres agora)
-    type InstData = {
-      number: number; amount: number; netValue?: number;
-      dueDate: Date; cashDate?: Date; status: string; paidAt?: Date;
-      label?: string; paymentMethod?: string;
-    };
-    let installmentData: InstData[] = [];
-
-    if (Array.isArray(customInstallments) && customInstallments.length > 0) {
-      installmentData = customInstallments.map((inst: {
-        amount: string | number; dueDate: string; cashDate?: string;
-        netValue?: string | number; label?: string; paid?: boolean; paymentMethod?: string;
-      }, i: number) => {
-        const instPaid = isPaid || inst.paid === true;
-        const entry: InstData = {
-          number:  i + 1,
-          amount:  parseFloat(String(inst.amount)),
-          dueDate: new Date(String(inst.dueDate) + "T12:00"),
-          status:  instPaid ? "pago" : "pendente",
-          label:   inst.label || undefined,
-        };
-        if (inst.cashDate)      entry.cashDate      = new Date(String(inst.cashDate) + "T12:00");
-        if (inst.netValue)      entry.netValue      = parseFloat(String(inst.netValue));
-        if (inst.paymentMethod) entry.paymentMethod = inst.paymentMethod;
-        if (instPaid)           entry.paidAt        = new Date();
-        return entry;
-      });
-    }
+    const installmentData = Array.isArray(customInstallments) && customInstallments.length > 0
+      ? buildInstallmentCreateData(customInstallments as CustomInstallmentInput[], { markAllPaid: isPaid })
+      : [];
 
     const sale = await prisma.sale.create({
       data: {

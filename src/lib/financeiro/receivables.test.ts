@@ -226,6 +226,66 @@ describe("buildPreset", () => {
   });
 });
 
+describe("buildPreset — plan_installments", () => {
+  it("divide igualmente quando o total é exato", () => {
+    const lines = buildPreset("plan_installments", {
+      total: 1200, startDate: "2026-01-15", parcelas: 12,
+    });
+    expect(lines).toHaveLength(12);
+    expect(lines.every(l => l.amount === "100")).toBe(true);
+    expect(lines.every(l => l.paymentMethod === "Pix")).toBe(true);
+    expect(lines[0].label).toBe("1ª parcela");
+    expect(lines[11].label).toBe("12ª parcela");
+  });
+
+  it("preserva o total quando a divisao nao e exata, jogando a sobra na primeira parcela", () => {
+    const lines = buildPreset("plan_installments", {
+      total: 1000, startDate: "2026-07-27", parcelas: 3,
+    });
+    const soma = lines.reduce((s, l) => s + Number(l.amount), 0);
+    expect(soma).toBeCloseTo(1000, 2);
+    expect(lines[0].amount).toBe("333.34");
+    expect(lines[1].amount).toBe("333.33");
+    expect(lines[2].amount).toBe("333.33");
+  });
+
+  it("gera parcelas mensais a partir da data inicial, sem linha de entrada", () => {
+    const lines = buildPreset("plan_installments", {
+      total: 600, startDate: "2026-01-31", parcelas: 3,
+    });
+    expect(lines[0].dueDate).toBe("2026-01-31");
+    expect(lines[1].dueDate).toBe("2026-02-28");
+    expect(lines[2].dueDate).toBe("2026-03-31");
+    expect(lines.every(l => l.label !== "Entrada")).toBe(true);
+  });
+
+  it("parcelas: 1 gera uma unica linha com o valor total", () => {
+    const lines = buildPreset("plan_installments", {
+      total: 500, startDate: "2026-07-27", parcelas: 1,
+    });
+    expect(lines).toHaveLength(1);
+    expect(lines[0].amount).toBe("500");
+    expect(lines[0].dueDate).toBe("2026-07-27");
+    expect(lines[0].label).toBe("1ª parcela");
+  });
+
+  it("cashDate segue a regra automatica (Pix cai no mesmo dia)", () => {
+    const lines = buildPreset("plan_installments", {
+      total: 300, startDate: "2026-07-27", parcelas: 3,
+    });
+    expect(lines.every(l => l.cashDate === l.dueDate)).toBe(true);
+  });
+
+  it("ignora entryAmount", () => {
+    const lines = buildPreset("plan_installments", {
+      total: 1200, startDate: "2026-01-15", parcelas: 12, entryAmount: 500,
+    });
+    expect(lines).toHaveLength(12);
+    const soma = lines.reduce((s, l) => s + Number(l.amount), 0);
+    expect(soma).toBeCloseTo(1200, 2);
+  });
+});
+
 describe("emptyLine", () => {
   it("cria uma linha vazia com padroes seguros", () => {
     const l = emptyLine("2026-07-27");

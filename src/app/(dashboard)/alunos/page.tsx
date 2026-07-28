@@ -159,11 +159,16 @@ function AlunoPaymentForm({
 
   const plan = plans.find(p => p.id === selectedPlanId);
 
-  // Auto-preenche o valor total sugerido ao selecionar um plano.
+  // Gera as parcelas do plano ao selecioná-lo — continuam 100% editáveis depois.
   function applyPlan(p: ServicePlan) {
     setSelectedPlanId(p.id);
     setCustomPlanName("");
     setPresetTotal(String(p.totalAmount));
+    setLines(buildPreset("plan_installments", {
+      total:     p.totalAmount,
+      startDate: today,
+      parcelas:  p.installments,
+    }));
   }
 
   // IA
@@ -302,11 +307,12 @@ function AlunoPaymentForm({
           </label>
           <label className="text-[11px] text-gray-500">
             Parcelas
-            <select value={presetParcelas} onChange={e => setPresetParcelas(Number(e.target.value))}
-              className={`${inputSmCls} w-20 block mt-0.5`}>
-              <option value={2}>2</option>
-              <option value={3}>3</option>
-            </select>
+            <input type="number" min={1} max={60} step={1} value={presetParcelas}
+              onChange={e => {
+                const n = parseInt(e.target.value, 10);
+                setPresetParcelas(Number.isFinite(n) ? Math.min(60, Math.max(1, n)) : 1);
+              }}
+              className={`${inputSmCls} w-20 block mt-0.5`} />
           </label>
         </div>
 

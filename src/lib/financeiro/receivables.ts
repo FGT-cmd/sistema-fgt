@@ -31,7 +31,8 @@ export type PresetId =
   | "pix_full"
   | "entry_pix_installments"
   | "entry_then_card"
-  | "entry_then_pix";
+  | "entry_then_pix"
+  | "plan_installments";
 
 export const RECEIVABLE_METHODS = [
   "Pix", "Cartão", "InfinitePay", "Dinheiro", "Transferência", "Boleto", "Outro",
@@ -181,6 +182,24 @@ export function buildPreset(
       makeLine({ dueDate: addMonths(startDate, 1), paymentMethod: method,
                  amount: String(round2(total - entry)), label: "Restante" }),
     ];
+  }
+
+  if (preset === "plan_installments") {
+    // Parcelas mensais de plano — sem entrada; entryAmount é ignorado.
+    const parcelasPlano = opts.parcelas ?? 1;
+    const baseMensal = round2(total / parcelasPlano);
+    const linhasPlano: ReceivableLine[] = [];
+    for (let i = 0; i < parcelasPlano; i++) {
+      // A sobra de centavos vai na primeira parcela para o total fechar.
+      const valor = i === 0 ? round2(total - baseMensal * (parcelasPlano - 1)) : baseMensal;
+      linhasPlano.push(makeLine({
+        dueDate: addMonths(startDate, i),
+        paymentMethod: "Pix",
+        amount: String(valor),
+        label: `${i + 1}ª parcela`,
+      }));
+    }
+    return linhasPlano;
   }
 
   // entry_pix_installments

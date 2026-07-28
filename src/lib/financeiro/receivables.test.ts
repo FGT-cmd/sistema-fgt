@@ -7,6 +7,7 @@ import {
   buildPreset,
   emptyLine,
   toApiInstallments,
+  toNumber,
   type ReceivableLine,
 } from "./receivables";
 
@@ -252,5 +253,19 @@ describe("toApiInstallments", () => {
     const lines = [line({ id: "a", amount: "100" }), line({ id: "b", amount: "" }),
                    line({ id: "c", amount: "0" })];
     expect(toApiInstallments(lines)).toHaveLength(1);
+  });
+});
+
+describe("toNumber", () => {
+  it("interpreta virgula como separador decimal pt-BR", () => {
+    expect(toNumber("1.200,00")).toBe(1200);
+  });
+
+  it("interpreta ponto como separador de milhares quando nao ha virgula", () => {
+    expect(toNumber("1.200")).toBe(1200);
+  });
+
+  it("interpreta ponto como decimal quando nao segue o padrao de milhares", () => {
+    expect(toNumber("1.5")).toBe(1.5);
   });
 });

@@ -13,6 +13,7 @@ import {
 import { ReceivablesTable } from "@/components/financeiro/ReceivablesTable";
 import {
   buildPreset, toApiInstallments, sumTotals, emptyLine, defaultCashDate,
+  toNumber, RECEIVABLE_METHODS,
   type ReceivableLine, type PresetId,
 } from "@/lib/financeiro/receivables";
 
@@ -115,6 +116,21 @@ function formatPhone(raw: string): string {
   return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
 }
 
+// A IA de /api/alunos/analisar responde formas de pagamento fora do
+// vocabulário de RECEIVABLE_METHODS (ex: "Crédito", "Débito"). Normaliza
+// qualquer valor recebido para uma opção válida do select de linhas.
+function toReceivableMethod(raw: string | null | undefined): string {
+  if (raw === "Crédito" || raw === "Débito") return "Cartão";
+  if (raw && (RECEIVABLE_METHODS as readonly string[]).includes(raw)) return raw;
+  return "Outro";
+}
+
+function isValidIsoDate(v: unknown): v is string {
+  return typeof v === "string"
+    && /^\d{4}-\d{2}-\d{2}$/.test(v)
+    && !isNaN(new Date(v + "T12:00:00").getTime());
+}
+
 // ─── AlunoPaymentForm ──────────────────────────────────────────────
 function AlunoPaymentForm({
   aluno, plans, onSaved, onCancel,
@@ -162,25 +178,28 @@ function AlunoPaymentForm({
           texto: negotiationNotes,
           serviceValue: presetTotal || plan?.totalAmount,
           planName: plan?.name || customPlanName,
-          paymentMethod: aluno.paymentMethod || "Pix",
+          paymentMethod: toReceivableMethod(aluno.paymentMethod || "Pix"),
         }),
       });
       const data = await res.json();
       if (data.customInstallments?.length) {
+        const fallbackMethod = toReceivableMethod(data.paymentMethod || "Pix");
         setLines(data.customInstallments.map((i: {
           amount: number; dueDate: string; label?: string; paymentMethod?: string;
         }, idx: number) => {
-          const base = emptyLine(i.dueDate);
-          const method = i.paymentMethod || data.paymentMethod || "Pix";
+          const dueDate = isValidIsoDate(i.dueDate) ? i.dueDate : today;
+          const method  = i.paymentMethod ? toReceivableMethod(i.paymentMethod) : fallbackMethod;
+          const base = emptyLine(dueDate);
           return {
             ...base,
             amount:        String(i.amount),
-            dueDate:       i.dueDate,
-            cashDate:      defaultCashDate(i.dueDate, method),
+            dueDate,
+            cashDate:      defaultCashDate(dueDate, method),
             paymentMethod: method,
             label:         i.label || `${idx + 1}ª parcela`,
           };
         }));
+        if (data.totalAmount) setPresetTotal(String(data.totalAmount));
         if (data.summary) setAiSummary(data.summary);
       }
     } finally {
@@ -301,9 +320,9 @@ function AlunoPaymentForm({
           ] as [PresetId, string][]).map(([id, label]) => (
             <button key={id} type="button"
               onClick={() => setLines(buildPreset(id, {
-                total:       parseFloat(presetTotal.replace(",", ".")) || 0,
+                total:       toNumber(presetTotal),
                 startDate:   today,
-                entryAmount: parseFloat(presetEntry.replace(",", ".")) || 0,
+                entryAmount: toNumber(presetEntry),
                 parcelas:    presetParcelas,
               }))}
               className="px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-700 hover:border-indigo-400 hover:text-indigo-600 bg-white">

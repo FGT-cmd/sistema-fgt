@@ -37,7 +37,7 @@ export const RECEIVABLE_METHODS = [
   "Pix", "Cartão", "InfinitePay", "Dinheiro", "Transferência", "Boleto", "Outro",
 ] as const;
 
-function toNumber(v: string): number {
+export function toNumber(v: string): number {
   // Aceita formatação brasileira com separador decimal (vírgula) e de milhares (ponto).
   // Regra: se tem vírgula, é decimal; se tem ponto, decide pelo padrão
   // (se é padrão de milhares x.xxx, remove; senão é decimal).

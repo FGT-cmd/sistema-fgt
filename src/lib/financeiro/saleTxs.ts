@@ -41,6 +41,15 @@ export type SaleTx = {
   client: { id: string; name: string };
   _saleId: string;
   _installmentId?: string;
+  // Discriminador explícito do fluxo financeiro desta linha. Necessário
+  // porque as duas linhas de uma mesma parcela compartilham type:"receita" —
+  // sem isso, qualquer soma que filtre só por type conta o valor em dobro.
+  _flow?: "faturamento" | "caixa";
+  // Valor bruto e vencimento originais da parcela, preservados na linha de
+  // Caixa para que editar essa linha sem alterações não sobrescreva o
+  // amount/dueDate reais da parcela com o valor líquido/data de caixa.
+  _grossAmount?: number;
+  _grossDueDate?: string | null;
 };
 
 export function buildSaleTxs(
@@ -78,6 +87,7 @@ export function buildSaleTxs(
             amount: inst.amount,
             category: "Faturamento",
             dueDate: inst.dueDate ?? null,
+            _flow: "faturamento" as const,
           },
           {
             ...base,
@@ -86,6 +96,9 @@ export function buildSaleTxs(
             amount: liquido,
             category: "Caixa",
             dueDate: dataCaixa,
+            _flow: "caixa" as const,
+            _grossAmount: inst.amount,
+            _grossDueDate: inst.dueDate ?? null,
           },
         ];
       }),

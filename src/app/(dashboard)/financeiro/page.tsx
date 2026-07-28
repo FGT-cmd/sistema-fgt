@@ -16,6 +16,14 @@ type Tx = {
   paymentMethod?: string | null; notes?: string | null; clientId?: string | null;
   client?: { id: string; name: string } | null;
   _saleId?: string; _installmentId?: string;
+  // Ausente em lançamentos reais; "faturamento" ou "caixa" nas duas linhas
+  // geradas por parcela (ver isDerivedTxId/countsAsCaixa/countsAsFaturamento).
+  _flow?: "faturamento" | "caixa";
+  // Valor bruto e vencimento originais da parcela, presentes só na linha de
+  // Caixa (ver EditTxModal — evita que um "Salvar" sem alterações grave o
+  // valor líquido/data de caixa como se fossem o bruto/vencimento reais).
+  _grossAmount?: number;
+  _grossDueDate?: string | null;
 };
 type Installment = {
   id: string; number: number; amount: number; dueDate: string;
@@ -87,6 +95,12 @@ function monthStr(d: Date) { return `${d.getFullYear()}-${String(d.getMonth()+1)
 function isDerivedTxId(id: string) {
   return id.startsWith("inst_") || id.startsWith("rev_") || id.startsWith("fat_");
 }
+// Faturamento e Caixa são duas linhas com type:"receita" para a MESMA
+// parcela — somar por type sozinho conta o valor em dobro. Um lançamento
+// real (não derivado de venda) não tem _flow e deve contar nas duas
+// agregações, exatamente como sempre contou.
+function countsAsCaixa(t: Tx) { return t._flow == null || t._flow === "caixa"; }
+function countsAsFaturamento(t: Tx) { return t._flow == null || t._flow === "faturamento"; }
 
 // ─── StatusBadge ──────────────────────────────────────────────────
 function StatusBadge({ status, type, dueDate, onClick }: {
@@ -143,12 +157,20 @@ function EditTxModal({ tx, clients, incomeCats, expenseCats, recvMethods, payMet
   const methods = isIncome ? recvMethods : payMethods;
   const statuses = isIncome ? STATUSES_RECEITA : STATUSES_DESPESA;
 
+  // A linha de Caixa (inst_) exibe o valor líquido/data de caixa, mas o
+  // PATCH de parcela grava "amount"/"dueDate" direto no bruto/vencimento da
+  // parcela. Pré-preenchendo com o bruto original (_grossAmount/
+  // _grossDueDate), um "Salvar" sem alterações vira um no-op de verdade em
+  // vez de sobrescrever o bruto com o líquido.
+  const editAmount = isVirtual ? (tx._grossAmount ?? tx.amount) : tx.amount;
+  const editDueDate = isVirtual ? (tx._grossDueDate ?? tx.dueDate) : tx.dueDate;
+
   const [form, setForm] = useState({
     description: tx.description,
-    amount: String(tx.amount),
+    amount: String(editAmount),
     category: tx.category,
     status: tx.status,
-    dueDate: tx.dueDate ? tx.dueDate.slice(0,10) : "",
+    dueDate: editDueDate ? editDueDate.slice(0,10) : "",
     paymentMethod: tx.paymentMethod || "",
     notes: tx.notes || "",
     clientId: tx.clientId || "",
@@ -197,6 +219,7 @@ function EditTxModal({ tx, clients, incomeCats, expenseCats, recvMethods, payMet
         {isVirtual && (
           <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700">
             Vínculo com aluno/venda preservado. Apenas campos operacionais podem ser editados.
+            Valor e Data referem-se ao bruto e vencimento da parcela (não ao líquido/data de caixa exibidos na lista).
           </div>
         )}
         {!isVirtual && (
@@ -550,7 +573,9 @@ function PainelTab({ allTxs, goals, onSaveGoal }: {
 
   const months = Array.from({length:12},(_,m)=>{
     const md = new Date(year,m,1);
-    const recs = allTxs.filter(t=>t.type==="receita"&&(inMonth(md,t.dueDate)||inMonth(md,t.paidAt)));
+    // KPIs de receita/resultado: conta o faturamento (bruto), não o caixa —
+    // senão cada parcela de venda contaria duas vezes (fat_ e inst_).
+    const recs = allTxs.filter(t=>t.type==="receita"&&countsAsFaturamento(t)&&(inMonth(md,t.dueDate)||inMonth(md,t.paidAt)));
     const desp = allTxs.filter(t=>t.type==="despesa"&&(inMonth(md,t.dueDate)||inMonth(md,t.paidAt)));
     const realR = recs.filter(t=>t.status==="pago").reduce((s,t)=>s+t.amount,0);
     const totalR = recs.reduce((s,t)=>s+t.amount,0);
@@ -744,12 +769,17 @@ function MesAtualTab({ allTxs, txs, monthDate, clients, incomeCats, expenseCats,
     setTimeout(()=>setSavedField(f=>f==="notes"?null:f),2000);
   }
 
+  // mRecs alimenta a tabela (mostra faturamento E caixa como linhas
+  // separadas, de propósito). Para os totais/saldos em dinheiro real,
+  // usamos mRecsCaixa — só a linha de Caixa de cada parcela — senão cada
+  // parcela de venda seria contada duas vezes (fat_ e inst_).
   const mRecs = allTxs.filter(t=>t.type==="receita"&&(inMonth(monthDate,t.dueDate)||inMonth(monthDate,t.paidAt)))
     .sort((a,b)=>new Date(txDate(a)||"").getTime()-new Date(txDate(b)||"").getTime());
+  const mRecsCaixa = mRecs.filter(countsAsCaixa);
   const mDesp = txs.filter(t=>t.type==="despesa"&&(inMonth(monthDate,t.dueDate)||inMonth(monthDate,t.paidAt)))
     .sort((a,b)=>new Date(txDate(a)||"").getTime()-new Date(txDate(b)||"").getTime());
 
-  const entradas = mRecs.filter(t=>t.status==="pago").reduce((s,t)=>s+t.amount,0);
+  const entradas = mRecsCaixa.filter(t=>t.status==="pago").reduce((s,t)=>s+t.amount,0);
   const saidas   = mDesp.filter(t=>t.status==="pago").reduce((s,t)=>s+t.amount,0);
   const saldoINum = parseFloat(saldoI.replace(",","."))||0;
   const saldoCalc = saldoINum+entradas-saidas;
@@ -757,10 +787,10 @@ function MesAtualTab({ allTxs, txs, monthDate, clients, incomeCats, expenseCats,
   const diff = saldoB!==""?saldoCalc-saldoBNum:null;
 
   const aPagar   = mDesp.filter(t=>t.status!=="pago"&&t.status!=="cancelado");
-  const aReceber = mRecs.filter(t=>t.status!=="pago"&&t.status!=="cancelado");
+  const aReceber = mRecsCaixa.filter(t=>t.status!=="pago"&&t.status!=="cancelado");
   const vencidas = aReceber.filter(t=>isOverdue(t.status,t.dueDate));
 
-  const totalRec = mRecs.reduce((s,t)=>s+t.amount,0);
+  const totalRec = mRecsCaixa.reduce((s,t)=>s+t.amount,0);
   const totalDesp= mDesp.reduce((s,t)=>s+t.amount,0);
   const resultado= entradas-saidas;
   const margem   = entradas>0?(resultado/entradas)*100:null;
@@ -967,8 +997,12 @@ function TxTable({txs,type,onToggle,onDelete,onEdit}:{
     </div>
   );
   const isIncome = type==="receita";
-  const totalAll = txs.reduce((s,t)=>s+t.amount,0);
-  const totalPago = txs.filter(t=>t.status==="pago").reduce((s,t)=>s+t.amount,0);
+  // txs traz faturamento e caixa como linhas separadas (de propósito, para
+  // exibição). O rodapé soma dinheiro em conta — só a linha de Caixa conta,
+  // senão cada parcela de venda seria somada duas vezes.
+  const summable = isIncome ? txs.filter(countsAsCaixa) : txs;
+  const totalAll = summable.reduce((s,t)=>s+t.amount,0);
+  const totalPago = summable.filter(t=>t.status==="pago").reduce((s,t)=>s+t.amount,0);
 
   return (
     <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
@@ -988,6 +1022,10 @@ function TxTable({txs,type,onToggle,onDelete,onEdit}:{
         <tbody>
           {txs.map(tx=>{
             const isVirtual = isDerivedTxId(tx.id);
+            // Faturamento não tem status próprio para pagar/receber — ele
+            // segue a parcela (linha Caixa). Sem isso, clicar aqui dispara
+            // um PATCH para um id fat_ que não existe em lancamentos.
+            const isFaturamento = tx.id.startsWith("fat_");
             const over = isOverdue(tx.status,tx.dueDate);
             return (
               <tr key={tx.id} className={`border-t border-gray-50 hover:bg-gray-50/50 group ${over&&tx.status!=="pago"?"bg-red-50/20":""}`}>
@@ -1005,7 +1043,7 @@ function TxTable({txs,type,onToggle,onDelete,onEdit}:{
                 <td className="px-4 py-2.5 text-xs text-gray-500 hidden md:table-cell truncate max-w-[120px]">{tx.description}</td>
                 <td className="px-4 py-2.5 text-center">
                   <StatusBadge status={tx.status} type={type} dueDate={tx.dueDate}
-                    onClick={()=>onToggle(tx.id,tx.status==="pago"?"pendente":"pago")}/>
+                    onClick={isFaturamento ? undefined : ()=>onToggle(tx.id,tx.status==="pago"?"pendente":"pago")}/>
                 </td>
                 <td className="px-2 py-2.5">
                   <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1061,7 +1099,9 @@ function PlanejamentoTab({ allTxs, txs, monthCloses, onSaveClose }: {
     const md = new Date(year,m,1);
     const mk = `${year}-${String(m+1).padStart(2,"0")}`;
     const mc = monthCloses[mk];
-    const recs = allTxs.filter(t=>t.type==="receita"&&(inMonth(md,t.dueDate)||inMonth(md,t.paidAt)));
+    // realR é receita realizada (faturamento), não caixa — mesma escolha de
+    // PainelTab, para não contar cada parcela em dobro.
+    const recs = allTxs.filter(t=>t.type==="receita"&&countsAsFaturamento(t)&&(inMonth(md,t.dueDate)||inMonth(md,t.paidAt)));
     const desp = txs.filter(t=>t.type==="despesa"&&(inMonth(md,t.dueDate)||inMonth(md,t.paidAt)));
     const realR = recs.filter(t=>t.status==="pago").reduce((s,t)=>s+t.amount,0);
     const realD = desp.filter(t=>t.status==="pago").reduce((s,t)=>s+t.amount,0);
@@ -1295,7 +1335,9 @@ function LancamentosTab({ allTxs, txs, clients, incomeCats, expenseCats, recvMet
     return true;
   }).sort((a,b)=>new Date(txDate(b)||"").getTime()-new Date(txDate(a)||"").getTime());
 
-  const totE = filtered.filter(t=>t.type==="receita").reduce((s,t)=>s+t.amount,0);
+  // filtered ainda lista faturamento e caixa como linhas separadas para
+  // exibição; o total de Entradas é dinheiro em conta, então soma só Caixa.
+  const totE = filtered.filter(t=>t.type==="receita"&&countsAsCaixa(t)).reduce((s,t)=>s+t.amount,0);
   const totS = filtered.filter(t=>t.type==="despesa").reduce((s,t)=>s+t.amount,0);
 
   const sCls = "border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-indigo-400 bg-white";
@@ -1385,6 +1427,7 @@ function LancamentosTab({ allTxs, txs, clients, incomeCats, expenseCats, recvMet
               <tbody>
                 {filtered.map(tx=>{
                   const isVirtual = isDerivedTxId(tx.id);
+                  const isFaturamento = tx.id.startsWith("fat_");
                   return (
                     <tr key={tx.id} className="border-t border-gray-50 hover:bg-gray-50/50 group">
                       <td className="px-4 py-2.5 text-xs text-gray-500 whitespace-nowrap">{fmtDate(txDate(tx))}</td>
@@ -1401,7 +1444,7 @@ function LancamentosTab({ allTxs, txs, clients, incomeCats, expenseCats, recvMet
                       <td className="px-4 py-2.5 text-xs text-gray-400 hidden xl:table-cell">{tx.paymentMethod||"—"}</td>
                       <td className="px-4 py-2.5 text-center">
                         <StatusBadge status={tx.status} type={tx.type} dueDate={tx.dueDate}
-                          onClick={()=>onToggle(tx.id,tx.status==="pago"?"pendente":"pago")}/>
+                          onClick={isFaturamento ? undefined : ()=>onToggle(tx.id,tx.status==="pago"?"pendente":"pago")}/>
                       </td>
                       <td className="px-4 py-2.5 text-right font-semibold text-sm">
                         <span style={{color:tx.type==="receita"?(tx.status==="pago"?"#16a34a":"#374151"):(tx.status==="pago"?"#dc2626":"#374151")}}>

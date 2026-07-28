@@ -81,6 +81,12 @@ function inMonth(d: Date, ds?: string | null) {
 }
 function txDate(tx: Tx) { return tx.paidAt || tx.dueDate || null; }
 function monthStr(d: Date) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; }
+// Lançamento derivado (caixa, faturamento ou o antigo formato de receita de
+// cartão) — não existe como registro próprio, não deve ser editável nem
+// removível diretamente.
+function isDerivedTxId(id: string) {
+  return id.startsWith("inst_") || id.startsWith("rev_") || id.startsWith("fat_");
+}
 
 // ─── StatusBadge ──────────────────────────────────────────────────
 function StatusBadge({ status, type, dueDate, onClick }: {
@@ -129,6 +135,9 @@ function EditTxModal({ tx, clients, incomeCats, expenseCats, recvMethods, payMet
   onSave: (data: Record<string,unknown>) => Promise<void>;
 }) {
   const isVirtual = tx.id.startsWith("inst_");
+  // Faturamento (fat_) e a antiga receita de cartão (rev_) são derivados da
+  // venda/parcela e nunca existiram como lançamento próprio — não editáveis.
+  const isReadOnly = !isVirtual && isDerivedTxId(tx.id);
   const isIncome = tx.type === "receita";
   const cats = isIncome ? incomeCats : expenseCats;
   const methods = isIncome ? recvMethods : payMethods;
@@ -166,6 +175,21 @@ function EditTxModal({ tx, clients, incomeCats, expenseCats, recvMethods, payMet
 
   const inputCls = "w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400";
   const labelCls = "block text-xs font-semibold text-gray-600 mb-1";
+
+  if (isReadOnly) {
+    return (
+      <Modal title="Lançamento derivado" subtitle="Calculado automaticamente a partir da venda" onClose={onClose}>
+        <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700">
+          Este lançamento (faturamento/caixa) é calculado a partir da venda e de suas parcelas
+          e não pode ser editado diretamente. Para alterar valores, prazos ou forma de
+          pagamento, edite a parcela correspondente na ficha do aluno.
+        </div>
+        <div className="flex gap-2 pt-4">
+          <button type="button" onClick={onClose} className="flex-1 py-2 rounded-lg text-sm border border-gray-200 text-gray-600 hover:bg-gray-50">Fechar</button>
+        </div>
+      </Modal>
+    );
+  }
 
   return (
     <Modal title="Editar Lançamento" subtitle={isVirtual ? "Parcela de venda — data, valor, status e forma editáveis" : ""} onClose={onClose}>
@@ -963,7 +987,7 @@ function TxTable({txs,type,onToggle,onDelete,onEdit}:{
         </thead>
         <tbody>
           {txs.map(tx=>{
-            const isVirtual = tx.id.startsWith("inst_")||tx.id.startsWith("rev_");
+            const isVirtual = isDerivedTxId(tx.id);
             const over = isOverdue(tx.status,tx.dueDate);
             return (
               <tr key={tx.id} className={`border-t border-gray-50 hover:bg-gray-50/50 group ${over&&tx.status!=="pago"?"bg-red-50/20":""}`}>
@@ -1360,7 +1384,7 @@ function LancamentosTab({ allTxs, txs, clients, incomeCats, expenseCats, recvMet
               </thead>
               <tbody>
                 {filtered.map(tx=>{
-                  const isVirtual = tx.id.startsWith("inst_")||tx.id.startsWith("rev_");
+                  const isVirtual = isDerivedTxId(tx.id);
                   return (
                     <tr key={tx.id} className="border-t border-gray-50 hover:bg-gray-50/50 group">
                       <td className="px-4 py-2.5 text-xs text-gray-500 whitespace-nowrap">{fmtDate(txDate(tx))}</td>
@@ -1509,7 +1533,7 @@ export default function FinanceiroPage() {
   }
 
   async function deleteTx(id:string) {
-    if (id.startsWith("inst_")) { alert("Para remover parcelas de aluno, exclua a venda na ficha do aluno."); return; }
+    if (isDerivedTxId(id)) { alert("Para remover parcelas de aluno, exclua a venda na ficha do aluno."); return; }
     if (!confirm("Remover este lançamento?")) return;
     const res=await fetch(`/api/financeiro/lancamentos/${id}`,{method:"DELETE"});
     if (!res.ok) { const d=await res.json().catch(()=>({})); alert(d.error||"Não foi possível remover."); return; }

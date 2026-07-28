@@ -1,5 +1,6 @@
 // Converte vendas em lançamentos exibidos no financeiro.
-// Extraído de app/(dashboard)/financeiro/page.tsx sem alteração de comportamento.
+// Cada parcela gera dois lançamentos: faturamento (bruto, na dueDate) e
+// caixa (líquido, na cashDate), com a forma de pagamento vinda da linha.
 
 export type InstallmentInput = {
   id: string;
@@ -46,45 +47,47 @@ export function buildSaleTxs(
   sales: SaleInput[],
   existingInstallmentIds: Set<string>,
 ): SaleTx[] {
-  return sales.flatMap(sale => {
-    const isCard = sale.negotiationType === "card";
-    const txList: SaleTx[] = [];
-
-    if (isCard && sale.grossValue && !existingInstallmentIds.has(`rev_${sale.id}`)) {
-      txList.push({
-        id: `rev_${sale.id}`, type: "receita",
-        description: `${sale.description} (faturamento)`,
-        amount: sale.grossValue, category: "Faturamento", status: "pago",
-        dueDate: sale.createdAt ?? null, paidAt: sale.createdAt ?? null,
-        paymentMethod: sale.paymentMethod ?? null, notes: null,
-        client: sale.client, _saleId: sale.id,
-      });
-    }
-
-    const instTxs = sale.installments
+  return sales.flatMap(sale =>
+    sale.installments
       .filter(inst => !existingInstallmentIds.has(inst.id))
-      .map(inst => {
-        const cashAmt = isCard && inst.netValue ? inst.netValue : inst.amount;
+      .flatMap(inst => {
         const suffix = inst.label
           ? ` — ${inst.label}`
           : sale.installmentsCount > 1
             ? ` (${inst.number}/${sale.installmentsCount})`
             : "";
-        return {
-          id: `inst_${inst.id}`, type: "receita" as const,
-          description: isCard
-            ? `${sale.description}${suffix} (caixa)`
-            : `${sale.description}${suffix}`,
-          amount: cashAmt,
-          category: isCard
-            ? "Caixa"
-            : sale.installmentsCount === 1 ? "Consultoria anual" : "Parcela",
-          status: inst.status, dueDate: inst.dueDate ?? null, paidAt: inst.paidAt ?? null,
-          paymentMethod: sale.paymentMethod ?? null, notes: null,
-          client: sale.client, _saleId: sale.id, _installmentId: inst.id,
+        const metodo   = inst.paymentMethod ?? sale.paymentMethod ?? null;
+        const liquido  = inst.netValue ?? inst.amount;
+        const dataCaixa = inst.cashDate ?? inst.dueDate ?? null;
+        const base = {
+          type: "receita" as const,
+          status: inst.status,
+          paidAt: inst.paidAt ?? null,
+          paymentMethod: metodo,
+          notes: null,
+          client: sale.client,
+          _saleId: sale.id,
+          _installmentId: inst.id,
         };
-      });
 
-    return [...txList, ...instTxs];
-  });
+        return [
+          {
+            ...base,
+            id: `fat_${inst.id}`,
+            description: `${sale.description}${suffix} (faturamento)`,
+            amount: inst.amount,
+            category: "Faturamento",
+            dueDate: inst.dueDate ?? null,
+          },
+          {
+            ...base,
+            id: `inst_${inst.id}`,
+            description: `${sale.description}${suffix}`,
+            amount: liquido,
+            category: "Caixa",
+            dueDate: dataCaixa,
+          },
+        ];
+      }),
+  );
 }

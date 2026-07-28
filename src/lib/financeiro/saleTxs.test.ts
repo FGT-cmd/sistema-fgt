@@ -18,42 +18,76 @@ function sale(over: Partial<SaleInput> = {}): SaleInput {
   };
 }
 
-describe("buildSaleTxs — comportamento atual", () => {
-  it("venda no Pix gera um lancamento por parcela pelo valor bruto", () => {
+describe("buildSaleTxs — por linha", () => {
+  it("cada parcela gera faturamento pelo bruto e caixa pelo liquido", () => {
+    const txs = buildSaleTxs([sale({
+      installments: [
+        { id: "i1", number: 1, amount: 1000, netValue: 950, dueDate: "2026-07-27",
+          cashDate: "2026-07-28", paidAt: null, status: "pendente",
+          label: "Entrada", paymentMethod: "Cartão" },
+      ],
+    })], new Set());
+
+    const fat = txs.find(t => t.category === "Faturamento");
+    const cx  = txs.find(t => t.category === "Caixa");
+
+    expect(fat?.amount).toBe(1000);
+    expect(fat?.dueDate).toBe("2026-07-27");
+    expect(cx?.amount).toBe(950);
+    expect(cx?.dueDate).toBe("2026-07-28");
+  });
+
+  it("usa a forma de pagamento da linha, nao a da venda", () => {
+    const txs = buildSaleTxs([sale({
+      paymentMethod: "Pix",
+      installments: [
+        { id: "i1", number: 1, amount: 600, netValue: 600, dueDate: "2026-08-27",
+          cashDate: "2026-08-28", paidAt: null, status: "pendente",
+          label: "Restante", paymentMethod: "Cartão" },
+      ],
+    })], new Set());
+
+    expect(txs.every(t => t.paymentMethod === "Cartão")).toBe(true);
+  });
+
+  it("linhas da mesma venda podem ter formas de pagamento diferentes", () => {
+    const txs = buildSaleTxs([sale({
+      installmentsCount: 2,
+      installments: [
+        { id: "i1", number: 1, amount: 400, netValue: 400, dueDate: "2026-07-27",
+          cashDate: "2026-07-27", paidAt: null, status: "pago",
+          label: "Entrada", paymentMethod: "Pix" },
+        { id: "i2", number: 2, amount: 600, netValue: 570, dueDate: "2026-08-27",
+          cashDate: "2026-08-28", paidAt: null, status: "pendente",
+          label: "Restante", paymentMethod: "Cartão" },
+      ],
+    })], new Set());
+
+    const metodos = txs.map(t => t.paymentMethod);
+    expect(metodos).toContain("Pix");
+    expect(metodos).toContain("Cartão");
+  });
+
+  it("sem cashDate usa a dueDate como fallback", () => {
     const txs = buildSaleTxs([sale({
       installments: [
         { id: "i1", number: 1, amount: 500, netValue: null, dueDate: "2026-07-27",
-          paidAt: null, status: "pendente", label: null, paymentMethod: "Pix", cashDate: null },
+          cashDate: null, paidAt: null, status: "pendente",
+          label: null, paymentMethod: null },
       ],
     })], new Set());
 
-    expect(txs).toHaveLength(1);
-    expect(txs[0].amount).toBe(500);
-    expect(txs[0]._installmentId).toBe("i1");
-  });
-
-  it("venda no cartao gera lancamento de faturamento mais o de caixa pelo liquido", () => {
-    const txs = buildSaleTxs([sale({
-      negotiationType: "card",
-      grossValue: 1000,
-      installments: [
-        { id: "i1", number: 1, amount: 1000, netValue: 950, dueDate: "2026-07-28",
-          paidAt: null, status: "pendente", label: null, paymentMethod: "Cartão", cashDate: null },
-      ],
-    })], new Set());
-
-    expect(txs).toHaveLength(2);
-    expect(txs[0].category).toBe("Faturamento");
-    expect(txs[0].amount).toBe(1000);
-    expect(txs[1].category).toBe("Caixa");
-    expect(txs[1].amount).toBe(950);
+    const cx = txs.find(t => t.category === "Caixa");
+    expect(cx?.dueDate).toBe("2026-07-27");
+    expect(cx?.amount).toBe(500);
   });
 
   it("ignora parcelas ja lancadas manualmente", () => {
     const txs = buildSaleTxs([sale({
       installments: [
         { id: "i1", number: 1, amount: 500, netValue: null, dueDate: "2026-07-27",
-          paidAt: null, status: "pendente", label: null, paymentMethod: "Pix", cashDate: null },
+          cashDate: null, paidAt: null, status: "pendente",
+          label: null, paymentMethod: "Pix" },
       ],
     })], new Set(["i1"]));
 

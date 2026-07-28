@@ -76,6 +76,14 @@ describe("netValueOf", () => {
   it("aceita valor com virgula decimal", () => {
     expect(netValueOf(line({ amount: "1500,50", feeOwner: "aluno" }))).toBe(1500.5);
   });
+
+  it("aceita formatacao brasileira com separador de milhares (ponto)", () => {
+    expect(netValueOf(line({ amount: "1.500,50", feeOwner: "aluno" }))).toBe(1500.5);
+  });
+
+  it("desconta taxa com formatacao brasileira", () => {
+    expect(netValueOf(line({ amount: "1.500,50", feeOwner: "empresa", feeValue: "100,50" }))).toBe(1400);
+  });
 });
 
 describe("sumTotals", () => {
@@ -160,6 +168,23 @@ describe("buildPreset", () => {
     });
     const ids = new Set(lines.map(l => l.id));
     expect(ids.size).toBe(lines.length);
+  });
+
+  it("entry_then_card com data mes-fim (31) cai no ultimo dia do mes seguinte", () => {
+    const lines = buildPreset("entry_then_card", {
+      total: 1000, startDate: "2026-01-31", entryAmount: 300,
+    });
+    expect(lines[1].dueDate).toBe("2026-02-28");
+  });
+
+  it("entry_pix_installments com data mes-fim distribui corretamente entre meses", () => {
+    const lines = buildPreset("entry_pix_installments", {
+      total: 1000, startDate: "2026-01-31", entryAmount: 400, parcelas: 3,
+    });
+    expect(lines[0].dueDate).toBe("2026-01-31");
+    expect(lines[1].dueDate).toBe("2026-02-28");
+    expect(lines[2].dueDate).toBe("2026-03-31");
+    expect(lines[3].dueDate).toBe("2026-04-30");
   });
 });
 

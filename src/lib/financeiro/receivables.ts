@@ -38,7 +38,10 @@ export const RECEIVABLE_METHODS = [
 ] as const;
 
 function toNumber(v: string): number {
-  const n = parseFloat(String(v).replace(",", "."));
+  // Aceita formatação brasileira: remove separador de milhares (ponto) e
+  // converte separador decimal (vírgula) para ponto.
+  const normalized = String(v).replace(/\./g, "").replace(",", ".");
+  const n = parseFloat(normalized);
   return Number.isFinite(n) ? n : 0;
 }
 
@@ -61,10 +64,15 @@ export function nextBusinessDay(iso: string): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** Mesma data, N meses à frente. */
+/** Mesma data, N meses à frente. Fixa overflow de dia (ex: Jan 31 + 1 mês = Feb 28). */
 function addMonths(iso: string, months: number): string {
   const d = new Date(iso + "T12:00:00");
+  const sourceDay = d.getDate();
   d.setMonth(d.getMonth() + months);
+  // Se o dia mudou por overflow, volta para o último dia do mês anterior.
+  if (d.getDate() !== sourceDay) {
+    d.setDate(0);
+  }
   return d.toISOString().slice(0, 10);
 }
 

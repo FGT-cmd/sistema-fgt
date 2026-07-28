@@ -6,6 +6,7 @@
 import { prisma } from "@/lib/prisma";
 import Anthropic from "@anthropic-ai/sdk";
 import { findClientMatches } from "@/lib/whatsapp/executor";
+import { defaultCashDate } from "@/lib/financeiro/receivables";
 import type {
   OCCreateStudentData, OCRegisterPaymentData, OCCreateTaskData,
   OCAddStudentNoteData, OCSaveContentIdeaData, OCEnriched, OCQueryType,
@@ -229,14 +230,16 @@ export async function createStudent(
     const today = new Date();
     const installmentAmount = enriched.planTotal / enriched.planInstallments;
 
+    const metodo = data.paymentMethod || "Pix";
+
     const sale = await prisma.sale.create({
       data: {
         description: enriched.planDisplayName!,
         totalAmount: enriched.planTotal,
         installmentsCount: enriched.planInstallments,
-        paymentMethod: data.paymentMethod || "Pix",
+        paymentMethod: metodo,
         status: "ativo",
-        negotiationType: "pix",
+        negotiationType: enriched.planInstallments === 1 ? "cash" : "custom",
         clientId: client.id,
         servicePlanId: enriched.planId,
       },
@@ -246,11 +249,15 @@ export async function createStudent(
       const dueDate = new Date(today);
       dueDate.setMonth(dueDate.getMonth() + (i - 1));
       dueDate.setDate(today.getDate()); // mesmo dia do mês
+      const cashIso = defaultCashDate(dueDate.toISOString().slice(0, 10), metodo);
       await prisma.installment.create({
         data: {
           number: i,
           amount: installmentAmount,
+          netValue: installmentAmount,
           dueDate,
+          cashDate: new Date(cashIso + "T12:00"),
+          paymentMethod: metodo,
           status: "pendente",
           saleId: sale.id,
           label: i === 1 ? "1ª parcela" : `${i}ª parcela`,

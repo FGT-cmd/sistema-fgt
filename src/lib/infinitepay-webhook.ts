@@ -127,7 +127,10 @@ async function createFinancialChain(
     data: {
       number: 1,
       amount: opts.netValue,
+      netValue: opts.netValue,
       dueDate: opts.paidAt,
+      cashDate: opts.paidAt, // pagamento confirmado: já entrou no caixa
+      paymentMethod: opts.paymentMethod,
       paidAt: opts.paidAt,
       status: "pago",
       label: "Parcela única",

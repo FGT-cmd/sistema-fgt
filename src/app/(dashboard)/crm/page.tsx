@@ -7,6 +7,7 @@ import {
   UserPlus, AlertTriangle, Clock, Filter, TrendingUp, BarChart2,
 } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { defaultCashDate } from "@/lib/financeiro/receivables";
 
 // ─── Pipeline stages ─────────────────────────────────────────────────────────
 
@@ -368,10 +369,19 @@ function ConvertModal({ deal, onClose, onDone }: { deal: Deal; onClose: () => vo
       const count = parseInt(payment.installments) || 1;
       const perParcela = parseFloat(payment.totalAmount) / count;
       const firstDue = new Date(payment.firstDueDate + "T12:00:00");
+      const metodo = payment.paymentMethod || "Pix";
       const customInstallments = Array.from({ length: count }, (_, i) => {
         const d = new Date(firstDue);
         d.setMonth(d.getMonth() + i);
-        return { amount: perParcela, dueDate: d.toISOString().slice(0, 10), label: count === 1 ? "Pagamento" : `${i + 1}ª parcela` };
+        const dueIso = d.toISOString().slice(0, 10);
+        return {
+          amount: perParcela,
+          netValue: perParcela,
+          dueDate: dueIso,
+          cashDate: defaultCashDate(dueIso, metodo),
+          paymentMethod: metodo,
+          label: count === 1 ? "Pagamento" : `${i + 1}ª parcela`,
+        };
       });
       await fetch("/api/financeiro/vendas", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -379,8 +389,8 @@ function ConvertModal({ deal, onClose, onDone }: { deal: Deal; onClose: () => vo
           clientId: student.id,
           description: payment.description,
           totalAmount: parseFloat(payment.totalAmount),
-          paymentMethod: payment.paymentMethod || "Pix",
-          negotiationType: "pix",
+          paymentMethod: metodo,
+          negotiationType: count === 1 ? "cash" : "custom",
           customInstallments,
         }),
       });

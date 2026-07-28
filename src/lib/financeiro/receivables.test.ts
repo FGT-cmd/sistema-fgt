@@ -84,6 +84,34 @@ describe("netValueOf", () => {
   it("desconta taxa com formatacao brasileira", () => {
     expect(netValueOf(line({ amount: "1.500,50", feeOwner: "empresa", feeValue: "100,50" }))).toBe(1400);
   });
+
+  it("toNumber: ponto como separador decimal (sem separador de milhares)", () => {
+    expect(netValueOf(line({ amount: "1500.50", feeOwner: "aluno" }))).toBe(1500.5);
+  });
+
+  it("toNumber: ponto como separador decimal em valor pequeno", () => {
+    expect(netValueOf(line({ amount: "222.34", feeOwner: "aluno" }))).toBe(222.34);
+  });
+
+  it("toNumber: ponto como separador de milhares (padrão x.xxx)", () => {
+    expect(netValueOf(line({ amount: "1.500", feeOwner: "aluno" }))).toBe(1500);
+  });
+
+  it("toNumber: multiplos grupos de milhares", () => {
+    expect(netValueOf(line({ amount: "1.500.000", feeOwner: "aluno" }))).toBe(1500000);
+  });
+
+  it("toNumber: inteiro puro", () => {
+    expect(netValueOf(line({ amount: "1500", feeOwner: "aluno" }))).toBe(1500);
+  });
+
+  it("toNumber: string vazia", () => {
+    expect(netValueOf(line({ amount: "", feeOwner: "aluno" }))).toBe(0);
+  });
+
+  it("toNumber: entrada nao numerica", () => {
+    expect(netValueOf(line({ amount: "abc", feeOwner: "aluno" }))).toBe(0);
+  });
 });
 
 describe("sumTotals", () => {
@@ -185,6 +213,15 @@ describe("buildPreset", () => {
     expect(lines[1].dueDate).toBe("2026-02-28");
     expect(lines[2].dueDate).toBe("2026-03-31");
     expect(lines[3].dueDate).toBe("2026-04-30");
+  });
+
+  it("entry_pix_installments com divisao nao exata preserva total", () => {
+    // Teste de regressão: detecta quando toNumber() mangled valores gerados por buildPreset
+    const lines = buildPreset("entry_pix_installments", {
+      total: 1000, startDate: "2026-07-27", entryAmount: 333, parcelas: 3,
+    });
+    const totals = sumTotals(lines);
+    expect(totals.faturamento).toBeCloseTo(1000, 2);
   });
 });
 

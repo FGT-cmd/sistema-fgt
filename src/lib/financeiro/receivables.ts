@@ -38,9 +38,25 @@ export const RECEIVABLE_METHODS = [
 ] as const;
 
 function toNumber(v: string): number {
-  // Aceita formatação brasileira: remove separador de milhares (ponto) e
-  // converte separador decimal (vírgula) para ponto.
-  const normalized = String(v).replace(/\./g, "").replace(",", ".");
+  // Aceita formatação brasileira com separador decimal (vírgula) e de milhares (ponto).
+  // Regra: se tem vírgula, é decimal; se tem ponto, decide pelo padrão
+  // (se é padrão de milhares x.xxx, remove; senão é decimal).
+  let normalized = String(v);
+
+  if (normalized.includes(",")) {
+    // Vírgula sempre é separador decimal: remove pontos, converte vírgula
+    normalized = normalized.replace(/\./g, "").replace(",", ".");
+  } else if (normalized.includes(".")) {
+    // Ponto pode ser decimal ou separador de milhares
+    // Padrão de milhares: 1-3 dígitos, depois grupos de 3 (ex: 1.500 ou 1.500.000)
+    if (!/^\d{1,3}(\.\d{3})+$/.test(normalized)) {
+      // Não é padrão de milhares, então ponto é decimal - deixa como está
+    } else {
+      // É padrão de milhares, remove pontos
+      normalized = normalized.replace(/\./g, "");
+    }
+  }
+
   const n = parseFloat(normalized);
   return Number.isFinite(n) ? n : 0;
 }

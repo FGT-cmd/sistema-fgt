@@ -7,6 +7,7 @@ import {
   LayoutGrid, Calendar, Pencil, Save,
 } from "lucide-react";
 import Link from "next/link";
+import { buildSaleTxs, type SaleInput } from "@/lib/financeiro/saleTxs";
 
 // ─── Types ────────────────────────────────────────────────────────
 type Tx = {
@@ -1467,33 +1468,10 @@ export default function FinanceiroPage() {
        .map(t=>(t as Tx&{installmentId?:string}).installmentId as string)
   );
 
-  const installmentTxs: Tx[] = sales.flatMap(sale=>{
-    const isCard = sale.negotiationType==="card";
-    const txList: Tx[] = [];
-    if (isCard&&sale.grossValue&&!installmentIds.has(`rev_${sale.id}`)) {
-      txList.push({
-        id:`rev_${sale.id}`,type:"receita",description:`${sale.description} (faturamento)`,
-        amount:sale.grossValue,category:"Faturamento",status:"pago",
-        dueDate:sale.createdAt??null,paidAt:sale.createdAt??null,
-        paymentMethod:sale.paymentMethod??null,notes:null,client:sale.client,_saleId:sale.id,
-      });
-    }
-    return [...txList, ...sale.installments.filter(inst=>!installmentIds.has(inst.id)).map(inst=>{
-      const cashAmt = (isCard&&(inst as Installment&{netValue?:number|null}).netValue)
-        ? (inst as Installment&{netValue?:number|null}).netValue as number : inst.amount;
-      const label = (inst as Installment&{label?:string|null}).label;
-      const suffix = label?` — ${label}`:sale.installmentsCount>1?` (${inst.number}/${sale.installmentsCount})`:"";
-      return {
-        id:`inst_${inst.id}`,type:"receita" as const,
-        description:isCard?`${sale.description}${suffix} (caixa)`:`${sale.description}${suffix}`,
-        amount:cashAmt,
-        category:isCard?"Caixa":sale.installmentsCount===1?"Consultoria anual":"Parcela",
-        status:inst.status,dueDate:inst.dueDate??null,paidAt:inst.paidAt??null,
-        paymentMethod:sale.paymentMethod??null,notes:null,client:sale.client,
-        _saleId:sale.id,_installmentId:inst.id,
-      };
-    })];
-  });
+  const installmentTxs = buildSaleTxs(
+    sales as unknown as SaleInput[],
+    installmentIds,
+  ) as unknown as Tx[];
 
   const allTxs: Tx[] = [...txs,...installmentTxs];
 

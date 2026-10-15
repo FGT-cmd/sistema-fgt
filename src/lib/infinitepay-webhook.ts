@@ -32,6 +32,15 @@ export function extractCaptureMethod(body: InfinitePayWebhookBody): string | nul
   return str(body.capture_method) ?? str(body.captureMethod);
 }
 
+/**
+ * O slug exigido pelo payment_check NÃO vem da criação do link (a API de
+ * criação só devolve {"url": "..."}, confirmado em teste direto) — vem do
+ * próprio webhook, campo invoice_slug (documentado oficialmente).
+ */
+export function extractInvoiceSlug(body: InfinitePayWebhookBody): string | null {
+  return str(body.invoice_slug) ?? str(body.invoiceSlug) ?? str(body.slug);
+}
+
 export function extractPaidAmountCents(body: InfinitePayWebhookBody): number | null {
   return num(body.paid_amount) ?? num(body.paidAmount) ?? num(body.amount);
 }
@@ -393,15 +402,16 @@ export async function processInfinitePayWebhook(
 
   // ─── Reconsulta obrigatória: InfinitePay não assina o webhook ──────────────
   // Nunca confiar em "paid"/valores que vieram só no corpo do POST recebido.
+  const invoiceSlug = extractInvoiceSlug(body);
   const verification = await verifyInfinitePayPayment({
     orderNsu,
     transactionNsu: txNsu,
-    slug: session.infinitepaySlug,
+    slug: invoiceSlug ?? session.infinitepaySlug,
   });
 
   if (!verification.verified || !verification.paid) {
     console.error("[infinitepay-webhook] payment_check não confirmou pagamento", {
-      orderNsu, txNsu, slug: session.infinitepaySlug, verification,
+      orderNsu, txNsu, invoiceSlug, sessionSlug: session.infinitepaySlug, verification,
     });
     // 400 (não 409): segundo a doc da InfinitePay, só 400 aciona reenvio do
     // webhook — importante se a falha for uma corrida temporária com o

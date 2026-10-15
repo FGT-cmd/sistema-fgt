@@ -14,25 +14,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { processOpenClawMessage } from "@/lib/openclaw/engine";
 import { prisma } from "@/lib/prisma";
 import { getDefaultUser } from "@/lib/user";
+import { sendTelegramMessage } from "@/lib/telegram";
 
 const BOT_TOKEN    = process.env.TELEGRAM_BOT_TOKEN;
 const ALLOWED_CHAT = process.env.TELEGRAM_ALLOWED_CHAT;
-
-async function sendTelegramMessage(chatId: string, text: string) {
-  if (!BOT_TOKEN) {
-    console.log(`[Telegram] BOT_TOKEN não configurado. Resposta seria:\n${text}`);
-    return;
-  }
-  try {
-    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text, parse_mode: "Markdown" }),
-    });
-  } catch (err) {
-    console.error("[Telegram] Erro ao enviar mensagem:", err);
-  }
-}
 
 export async function POST(req: NextRequest) {
   try {

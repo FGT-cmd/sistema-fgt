@@ -163,6 +163,27 @@ export async function getDailyPendingSummary(userId: string, queryType: OCQueryT
   return r;
 }
 
+// ─── 1b. listStudents ───────────────────────────────────────────────
+
+export async function listStudents(userId: string, filter: "ativos" | "todos" = "ativos"): Promise<string> {
+  const clients = await prisma.client.findMany({
+    where: filter === "ativos" ? { userId, status: "ativo" } : { userId },
+    orderBy: { name: "asc" },
+    select: { name: true, planName: true, status: true },
+  });
+
+  if (clients.length === 0) {
+    return filter === "ativos" ? "Nenhum aluno ativo no momento." : "Nenhum cliente cadastrado ainda.";
+  }
+
+  const list = clients
+    .map(c => `• ${c.name}${c.planName ? ` — ${c.planName}` : ""}${filter === "todos" ? ` _(${c.status})_` : ""}`)
+    .join("\n");
+
+  const label = filter === "ativos" ? "Alunos ativos" : "Todos os clientes";
+  return `🎓 *${label} (${clients.length}):*\n\n${list}`;
+}
+
 // ─── 2. enrichCreateStudent ────────────────────────────────────────
 
 export async function enrichCreateStudent(

@@ -3,6 +3,7 @@
 export type OCIntent =
   | "query_pending"
   | "query_crm"
+  | "query_students"
   | "create_student"
   | "create_lead"
   | "register_payment"
@@ -13,6 +14,7 @@ export type OCIntent =
 
 export type OCQueryType = "who_didnt_pay" | "overdue" | "today" | "attention" | "general";
 export type OCCRMQueryType = "pipeline" | "stuck" | "no_action" | "general";
+export type OCStudentsFilter = "ativos" | "todos";
 
 export type OCPaymentMethod =
   | "Pix" | "Dinheiro" | "Cartão" | "Transferência" | "Débito" | "Crédito";
@@ -60,6 +62,10 @@ export type OCQueryCRMData = {
   queryType: OCCRMQueryType;
 };
 
+export type OCQueryStudentsData = {
+  filter?: OCStudentsFilter;
+};
+
 export type OCCreateLeadData = {
   name: string;
   title?: string;       // título do deal
@@ -74,6 +80,7 @@ export type OCCreateLeadData = {
 export type OCExtractedData =
   | OCQueryPendingData
   | OCQueryCRMData
+  | OCQueryStudentsData
   | OCCreateStudentData
   | OCCreateLeadData
   | OCRegisterPaymentData

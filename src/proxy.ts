@@ -16,6 +16,7 @@ function isPublicPath(pathname: string): boolean {
   if (pathname.startsWith("/api/webhooks/")) return true;
   if (pathname.startsWith("/api/public/")) return true;
   if (pathname.startsWith("/api/op/")) return true; // já protegido pelo próprio OP_INTERNAL_SECRET
+  if (pathname.startsWith("/api/cron/")) return true; // já protegido pelo próprio CRON_SECRET
   if (pathname.startsWith("/checkout/")) return true;
   return false;
 }

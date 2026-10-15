@@ -44,7 +44,7 @@ import {
   isOCConfirmation, isOCCancellation, updateOCEventStatus,
 } from "./session";
 import {
-  queryCRM, createLead,
+  queryCRM, createLead, listStudents,
   enrichCreateStudent, createStudent,
   enrichRegisterPayment, registerPayment,
   enrichAddStudentNote, addStudentNote,
@@ -56,7 +56,7 @@ import type {
   OCProcessResult, OCIntent, OCExtractedData, OCEnriched,
   OCCreateStudentData, OCRegisterPaymentData, OCCreateTaskData,
   OCAddStudentNoteData, OCSaveContentIdeaData, OCQueryPendingData,
-  OCQueryCRMData, OCCreateLeadData,
+  OCQueryCRMData, OCCreateLeadData, OCQueryStudentsData,
 } from "./types";
 import { findClientMatches } from "@/lib/whatsapp/executor";
 
@@ -371,8 +371,30 @@ export async function processOpenClawMessage(params: {
     return { response, intent, status: crmStatus, eventId: evIdCRM };
   }
 
+  if (intent === "query_students") {
+    const d = data as OCQueryStudentsData;
+    let response: string;
+    let qsStatus: "executed" | "failed" = "executed";
+    let qsError: string | undefined;
+    try {
+      response = await listStudents(user.id, d.filter ?? "ativos");
+    } catch (err) {
+      qsStatus = "failed";
+      qsError = String(err);
+      response = "Sistema operacional indisponível. Não foi possível consultar os alunos agora. Tente novamente em instantes.";
+    }
+    let evIdQS: string | undefined;
+    try {
+      evIdQS = await persistEvent(existingEventId, { chatId, source, rawCommand: message, interpretedIntent: intent, extractedData: data as object, executionStatus: qsStatus, errorMessage: qsError, response, userId: user.id });
+      console.log(`[OpenClaw] Event persisted: id=${evIdQS} intent=${intent} status=${qsStatus} source=${source} chatId=${chatId}`);
+    } catch (saveErr) {
+      console.error("[OpenClaw] query_students event save failed:", saveErr);
+    }
+    return { response, intent, status: qsStatus, eventId: evIdQS };
+  }
+
   if (intent === "unknown") {
-    const response = "Não reconheci esse comando como uma operação do sistema.\n\nPosso executar:\n• *Consultar pendências* — \"quem não pagou?\", \"o que está atrasado?\"\n• *Criar aluna* — \"criar aluna Ana, plano semestral\"\n• *Registrar pagamento* — \"Ana pagou 300 no pix\"\n• *Criar tarefa* — \"me lembra de cobrar Bruna sexta\"\n• *Salvar observação* — \"obs da Ana: relatou fome à noite\"\n• *Salvar ideia* — \"ideia de conteúdo: ...\"\n• *Criar lead* — \"Ana quer contratar, veio pelo Instagram\"";
+    const response = "Não reconheci esse comando como uma operação do sistema.\n\nPosso executar:\n• *Consultar pendências* — \"quem não pagou?\", \"o que está atrasado?\"\n• *Listar alunos* — \"quem são os alunos?\", \"lista de clientes\"\n• *Criar aluna* — \"criar aluna Ana, plano semestral\"\n• *Registrar pagamento* — \"Ana pagou 300 no pix\"\n• *Criar tarefa* — \"me lembra de cobrar Bruna sexta\"\n• *Salvar observação* — \"obs da Ana: relatou fome à noite\"\n• *Salvar ideia* — \"ideia de conteúdo: ...\"\n• *Criar lead* — \"Ana quer contratar, veio pelo Instagram\"";
     let evIdUnk: string | undefined;
     try {
       evIdUnk = await persistEvent(existingEventId, { chatId, source, rawCommand: message, interpretedIntent: intent, executionStatus: "received", response, userId: user.id });

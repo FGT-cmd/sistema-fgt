@@ -36,6 +36,13 @@ query_crm → { "queryType": "pipeline" | "stuck" | "no_action" | "general" }
   - "sem ação/sem próxima ação/quem precisa de contato" → no_action
   - outros sobre CRM → general
 
+query_students → { "filter": "ativos" | "todos" }
+  - qualquer pergunta sobre quem são, quantos são ou a lista dos alunos/clientes cadastrados
+    (ex.: "quem são os alunos", "lista de alunos", "quantos alunos eu tenho", "meus alunos",
+    "todos os clientes") — interprete pela intenção da pergunta, não por bater com essas frases
+  - filter "todos" só quando pedir explicitamente leads/todos incluindo quem não é aluno ainda;
+    padrão é "ativos"
+
 create_student → { "name": string, "planName"?: string, "objective"?: string, "phone"?: string, "email"?: string }
   - qualquer "criar aluna", "cadastrar", "nova aluna", "adicionar aluna"
   - planName: extraia se mencionado ("semestral", "trimestral", "mensal", etc.)

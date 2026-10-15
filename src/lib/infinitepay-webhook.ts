@@ -87,6 +87,67 @@ export function mapCaptureMethodToPaymentMethod(capture: string | null): string 
   return "InfinitePay";
 }
 
+const PAYMENT_CHECK_URL = "https://api.checkout.infinitepay.io/payment_check";
+
+type PaymentCheckResult = {
+  verified: boolean;
+  paid: boolean;
+  amountCents: number | null;
+  paidAmountCents: number | null;
+  captureMethod: string | null;
+};
+
+/**
+ * Reconsulta a InfinitePay (endpoint payment_check, documentado oficialmente)
+ * em vez de confiar cegamente no corpo do webhook — a InfinitePay não assina
+ * nem autentica o POST do webhook de nenhuma forma, então essa reconsulta é
+ * a única maneira de confirmar que um pagamento é real antes de registrá-lo.
+ */
+async function verifyInfinitePayPayment(opts: {
+  orderNsu: string;
+  transactionNsu: string | null;
+  slug: string | null;
+}): Promise<PaymentCheckResult> {
+  const notVerified: PaymentCheckResult = {
+    verified: false, paid: false, amountCents: null, paidAmountCents: null, captureMethod: null,
+  };
+
+  const handle = process.env.INFINITEPAY_HANDLE?.trim();
+  if (!handle || !opts.transactionNsu || !opts.slug) {
+    return notVerified;
+  }
+
+  try {
+    const res = await fetch(PAYMENT_CHECK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({
+        handle: handle.replace(/^\$/, ""),
+        order_nsu: opts.orderNsu,
+        transaction_nsu: opts.transactionNsu,
+        slug: opts.slug,
+      }),
+    });
+    if (!res.ok) return notVerified;
+
+    const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!data || (data.success !== true && typeof data.success !== "undefined" && data.success !== "true")) {
+      // success explicitamente false/ausente-com-erro → não verificado
+      if (data?.success === false) return notVerified;
+    }
+
+    return {
+      verified: true,
+      paid: data?.paid === true,
+      amountCents: num(data?.amount),
+      paidAmountCents: num(data?.paid_amount),
+      captureMethod: str(data?.capture_method),
+    };
+  } catch {
+    return notVerified;
+  }
+}
+
 export type WebhookProcessResult =
   | { kind: "ok"; idempotent?: boolean }
   | { kind: "ignored"; reason: string }
@@ -320,9 +381,8 @@ export async function processInfinitePayWebhook(
 
   const txNsu = extractTransactionNsu(body);
   const receiptUrl = extractReceiptUrl(body);
-  const captureMethod = extractCaptureMethod(body);
-  const paidAmountCents = extractPaidAmountCents(body);
-  const paymentMethod = mapCaptureMethodToPaymentMethod(captureMethod);
+  const bodyCaptureMethod = extractCaptureMethod(body);
+  const bodyPaidAmountCents = extractPaidAmountCents(body);
   const paidAt = new Date();
   const payloadJson = body as Prisma.InputJsonValue;
 
@@ -330,6 +390,30 @@ export async function processInfinitePayWebhook(
   if (!customerName) {
     return { kind: "error", httpStatus: 409, message: "missing_customer_name" };
   }
+
+  // ─── Reconsulta obrigatória: InfinitePay não assina o webhook ──────────────
+  // Nunca confiar em "paid"/valores que vieram só no corpo do POST recebido.
+  const verification = await verifyInfinitePayPayment({
+    orderNsu,
+    transactionNsu: txNsu,
+    slug: session.infinitepaySlug,
+  });
+
+  if (!verification.verified || !verification.paid) {
+    console.error("[infinitepay-webhook] payment_check não confirmou pagamento", {
+      orderNsu, txNsu, slug: session.infinitepaySlug, verification,
+    });
+    // 400 (não 409): segundo a doc da InfinitePay, só 400 aciona reenvio do
+    // webhook — importante se a falha for uma corrida temporária com o
+    // payment_check, não uma fraude.
+    return { kind: "error", httpStatus: 400, message: "payment_not_verified" };
+  }
+
+  // Dados usados no registro financeiro vêm da reconsulta verificada,
+  // nunca do corpo do webhook recebido (que não tem autenticação).
+  const captureMethod = verification.captureMethod ?? bodyCaptureMethod;
+  const paidAmountCents = verification.paidAmountCents ?? bodyPaidAmountCents;
+  const paymentMethod = mapCaptureMethodToPaymentMethod(captureMethod);
 
   const user = await getDefaultUser();
   const grossValue = paidAmountCents != null ? paidAmountCents / 100 : null;

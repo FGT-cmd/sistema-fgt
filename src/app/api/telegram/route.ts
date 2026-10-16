@@ -3,9 +3,17 @@
  *
  * Para configurar:
  * 1. Crie um bot via @BotFather no Telegram → obtenha TELEGRAM_BOT_TOKEN
- * 2. Adicione ao .env: TELEGRAM_BOT_TOKEN=... e TELEGRAM_ALLOWED_CHAT=<seu chat_id>
- * 3. Configure o webhook:
- *    curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=<SUA_URL>/api/telegram"
+ * 2. Adicione ao .env: TELEGRAM_BOT_TOKEN=..., TELEGRAM_ALLOWED_CHAT=<seu chat_id>
+ *    (obrigatório: sem ele nenhum chat é atendido) e TELEGRAM_WEBHOOK_SECRET=<valor aleatório,
+ *    1-256 caracteres A-Z a-z 0-9 _ ->.
+ * 3. Configure o webhook com o MESMO segredo (o Telegram passa a mandá-lo no header
+ *    x-telegram-bot-api-secret-token, e updates sem ele são ignorados):
+ *    curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=<SUA_URL>/api/telegram&secret_token=<TELEGRAM_WEBHOOK_SECRET>"
+ *    Enquanto TELEGRAM_WEBHOOK_SECRET não estiver definido a rota continua aceitando
+ *    updates (para o deploy não quebrar antes do setWebhook), mas loga um aviso.
+ *
+ * Só update.message é processado: mensagem editada (edited_message) é ignorada
+ * para não lançar a mesma despesa duas vezes.
  *
  * Responde 200 na hora e processa em after(): extrato e foto levam dezenas de
  * segundos, e o Telegram reenvia o update se o webhook demorar.
@@ -22,6 +30,7 @@ import { takeCorrection } from "@/lib/financeiro/capture/apply";
 import { handleFinanceCallback } from "@/lib/financeiro/capture/callbacks";
 import { buildCaptureButtons, parseFinanceCallback } from "@/lib/financeiro/capture/telegramUi";
 import type { ImageMime } from "@/lib/financeiro/capture/interpret";
+import { isAllowedChat, secretTokenMatches } from "@/lib/telegramWebhookAuth";
 
 export const maxDuration = 300;
 
@@ -40,7 +49,7 @@ type TgMessage = {
 };
 type TgCallback = { id: string; data?: string; message?: { chat: { id: number | string } } };
 
-const allowed = (chatId: string) => !ALLOWED_CHAT || chatId === ALLOWED_CHAT;
+const allowed = (chatId: string) => isAllowedChat(chatId, ALLOWED_CHAT);
 
 async function processTextInner(chatId: string, text: string, ref: { eventId?: string }): Promise<void> {
   console.log("[telegram] received", chatId, text);
@@ -183,6 +192,16 @@ async function processCallback(chatId: string, data: string): Promise<void> {
 
 export async function POST(req: NextRequest) {
   try {
+    const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
+    if (secret) {
+      // Telegram expects 200 even on rejection; anything else makes it retry.
+      if (!secretTokenMatches(req.headers.get("x-telegram-bot-api-secret-token"), secret)) {
+        return NextResponse.json({ ok: true });
+      }
+    } else {
+      console.warn("[POST /api/telegram] TELEGRAM_WEBHOOK_SECRET não configurado: webhook sem autenticação. Defina e refaça o setWebhook com secret_token.");
+    }
+
     const update = await req.json();
 
     const callback = update.callback_query as TgCallback | undefined;
@@ -195,7 +214,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    const message = (update.message || update.edited_message) as TgMessage | undefined;
+    // edited_message is ignored on purpose: re-processing an edit would duplicate the entry.
+    const message = update.message as TgMessage | undefined;
     if (!message) return NextResponse.json({ ok: true });
     const chatId = String(message.chat.id);
 

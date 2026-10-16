@@ -30,6 +30,12 @@ describe("parse de campos", () => {
     expect(parseStatementAmount("−50,00")).toBe(-50);
     expect(parseStatementAmount("")).toBeNull();
   });
+  it("separadores inequívocos", () => {
+    expect(parseStatementAmount("1,234.56")).toBe(1234.56);
+    expect(parseStatementAmount("-1,234.56")).toBe(-1234.56);
+    expect(parseStatementAmount("0.500")).toBe(0.5);
+    expect(parseStatementAmount("1e3")).toBeNull();
+  });
 });
 
 describe("parseOfx", () => {
@@ -41,6 +47,13 @@ describe("parseOfx", () => {
     ]);
     expect(p.ledgerBalance).toEqual({ amount: 4230.15, date: "2026-09-30" });
     expect(p.isCard).toBe(false);
+  });
+});
+
+describe("parseOfx amounts", () => {
+  it("TRNAMT é sempre ponto decimal", () => {
+    const p = parseOfx("<STMTTRN><DTPOSTED>20260910<TRNAMT>1234.567<FITID>Z</STMTTRN>");
+    expect(p.rows[0].amount).toBe(1234.567);
   });
 });
 

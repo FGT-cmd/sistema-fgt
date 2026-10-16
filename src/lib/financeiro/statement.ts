@@ -38,12 +38,28 @@ export function parseStatementAmount(raw: string): number | null {
   } else if (s.startsWith("+")) {
     s = s.slice(1);
   }
-  let n: number;
-  if (s.includes(",")) n = Number(s.replace(/\./g, "").replace(",", "."));
-  else if (/^\d{1,3}(\.\d{3})+$/.test(s)) n = Number(s.replace(/\./g, ""));
-  else n = Number(s);
-  if (!s || !Number.isFinite(n)) return null;
+  const lastComma = s.lastIndexOf(",");
+  const lastDot = s.lastIndexOf(".");
+  if (lastComma >= 0 && lastDot >= 0) {
+    // o último separador é o decimal
+    s = lastComma > lastDot ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
+  } else if (lastComma >= 0) {
+    s = s.replace(/\./g, "").replace(",", ".");
+  } else if (/^[1-9]\d{0,2}(\.\d{3})+$/.test(s)) {
+    s = s.replace(/\./g, "");
+  }
+  if (!/^\d+(\.\d+)?$/.test(s)) return null;
+  const n = Number(s);
+  if (!Number.isFinite(n)) return null;
   return negative ? -n : n;
+}
+
+// OFX usa sempre ponto decimal (spec), sem heurística de separador de milhar.
+function parseOfxAmount(raw: string): number | null {
+  const s = raw.replace(/−/g, "-").replace(/\s/g, "");
+  if (!/^[+-]?\d+(\.\d+)?$/.test(s)) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
 }
 
 function ofxTag(block: string, name: string): string {
@@ -55,7 +71,7 @@ export function parseOfx(text: string): ParsedStatement {
   const rows: RawStatementRow[] = [];
   for (const block of text.split(/<STMTTRN>/i).slice(1)) {
     const date = parseStatementDate(ofxTag(block, "DTPOSTED"));
-    const amount = parseStatementAmount(ofxTag(block, "TRNAMT"));
+    const amount = parseOfxAmount(ofxTag(block, "TRNAMT"));
     const description = ofxTag(block, "MEMO") || ofxTag(block, "NAME");
     const fitId = ofxTag(block, "FITID");
     if (!date || amount === null) continue;
@@ -64,7 +80,7 @@ export function parseOfx(text: string): ParsedStatement {
   const lb = text.match(/<LEDGERBAL>([\s\S]*?)(<\/LEDGERBAL>|$)/i);
   let ledgerBalance: ParsedStatement["ledgerBalance"] = null;
   if (lb) {
-    const amount = parseStatementAmount(ofxTag(lb[1], "BALAMT"));
+    const amount = parseOfxAmount(ofxTag(lb[1], "BALAMT"));
     const date = parseStatementDate(ofxTag(lb[1], "DTASOF"));
     if (amount !== null && date) ledgerBalance = { amount, date };
   }

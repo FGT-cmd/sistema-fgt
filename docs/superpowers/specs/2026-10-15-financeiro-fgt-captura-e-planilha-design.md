@@ -54,6 +54,14 @@ Dois planos de implementação, nesta ordem:
 2. **Plano 2 — Tela e histórico:** Partes 2, 6 e 8 (tela nova em componentes, regra de mês,
    importação de jan/fev).
 
+## Ajustes feitos no Plano 1 (2026-10-16)
+
+1. `CapturePending` tem `kind` (`confirm | question | undo | correction`) e `chatId` fixo `"owner"`, sem `userId`.
+2. O interpretador tem também a ação `recategorize` (responder "é ferramenta" por voz).
+3. Os dois crons mensais viraram um slot `monthly` (dia 1, 09h BRT).
+4. Linhas de extrato de transferência entre contas próprias, pagamento de fatura ou aplicação/resgate são ignoradas (`IGNORAR`), para não contar em dobro com a fatura do cartão.
+5. Modelo: Haiku 5.5 em tudo, um modelo por tarefa (`capture`, `ask`, `categorize`, `document`). A tarefa que falhar na avaliação com frases reais (`npm run eval:finance`) sobe para Sonnet 5.5, só ela.
+
 ## Fora de escopo (registrado para depois)
 
 - **Spec B: Jarvis agente geral + cobrança escalonada** (próximo passo combinado, ver final).

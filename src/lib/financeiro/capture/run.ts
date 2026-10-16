@@ -10,13 +10,15 @@ import { emptyResult, type CaptureResult, type Channel, type SettleProposal, typ
 export async function captureText(text: string, channel: Channel): Promise<CaptureResult> {
   const user = await getDefaultUser();
   const { ctx } = await loadCaptureContext(user.id);
+  let actions;
   try {
-    const actions = await interpret(ctx, { kind: "text", text });
-    return await applyActions(actions, { source: channel, rawInput: text });
+    actions = await interpret(ctx, { kind: "text", text });
   } catch (err) {
     console.error("[finance/captureText]", err);
     return saveUnparsed(text, channel);
   }
+  // DB errors from apply must not fall back to saveUnparsed (applyActions is atomic and reports its own failure).
+  return applyActions(actions, { source: channel, rawInput: text });
 }
 
 export async function captureImage(

@@ -6,13 +6,14 @@ import {
   decodeStatementText, detectAccount, parseCsv, parseOfx, toStatementRows, type ParsedStatement,
 } from "../statement";
 import { dedupeRows } from "../dedupe";
-import { categorizeStatementRows, extractPdfStatement } from "./interpret";
+import { categorizeStatementRows, extractPdfStatement, InterpretError } from "./interpret";
 import { loadCaptureContext } from "./context";
 import { stageProposals } from "./apply";
 import { statementHeader, summarizeCapture } from "./summary";
 import { emptyResult, type CaptureResult, type SettleProposal } from "./types";
 
 const UNREADABLE = "Não consegui ler esse arquivo. Me manda o extrato em OFX ou CSV (no app do banco: Extrato → Exportar).";
+const TOO_LARGE = "Esse extrato é grande demais pra eu ler de uma vez. Exporta um mês por vez (no app do banco, escolha o período) e me manda de novo.";
 
 function clarifyResult(msg: string): CaptureResult {
   const r = emptyResult();
@@ -41,7 +42,8 @@ export async function captureStatementFile(input: {
     }
   } catch (err) {
     console.error("[finance/statement] parse", err);
-    return clarifyResult(UNREADABLE);
+    const tooLarge = err instanceof InterpretError && err.stopReason === "max_tokens";
+    return clarifyResult(tooLarge ? TOO_LARGE : UNREADABLE);
   }
   if (parsed.rows.length === 0) return clarifyResult(UNREADABLE);
 

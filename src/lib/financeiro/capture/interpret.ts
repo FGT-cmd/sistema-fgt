@@ -30,7 +30,13 @@ export type InterpretInput =
   | { kind: "text"; text: string }
   | { kind: "image"; imageBase64: string; mimeType: ImageMime; caption: string | null };
 
-export class InterpretError extends Error {}
+export class InterpretError extends Error {
+  readonly stopReason?: string;
+  constructor(message: string, opts?: { stopReason?: string }) {
+    super(message);
+    this.stopReason = opts?.stopReason;
+  }
+}
 
 async function structured<T>(params: {
   model: string;
@@ -47,7 +53,7 @@ async function structured<T>(params: {
     messages: [{ role: "user", content: params.content }],
   });
   if (res.stop_reason === "refusal" || res.stop_reason === "max_tokens") {
-    throw new InterpretError(`stop_reason=${res.stop_reason}`);
+    throw new InterpretError(`stop_reason=${res.stop_reason}`, { stopReason: res.stop_reason });
   }
   const text = res.content.find((b): b is Anthropic.TextBlock => b.type === "text");
   if (!text) throw new InterpretError("resposta sem texto");

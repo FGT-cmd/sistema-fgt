@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
-import { extractPdfStatement, interpret, FINANCE_MODELS } from "./interpret";
+import { categorizeStatementRows, extractPdfStatement, interpret, FINANCE_MODELS } from "./interpret";
 import { buildVocab, planSeed, type ConfigRow } from "../vocab";
 import type { CaptureContext, CreateAction } from "./types";
 
@@ -107,5 +107,24 @@ describe("interpretação real — document (gasta API, precisa dos arquivos do 
       expect(r.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
       expect(r.amount).not.toBe(0);
     }
+  });
+});
+
+describe("interpretação real — categorize (gasta API)", () => {
+  it("retirada, gasto pessoal e saque → Prolabore; contabilidade segue como despesa normal", async () => {
+    const rows = [
+      { date: "2025-10-23", amount: -2000.25, description: "Pix enviado para FERNANDO GOMES DA SILVA", externalId: "t1" },
+      { date: "2025-10-24", amount: -12, description: "Pix enviado para Padaria Avenida Tres Passos Ltda", externalId: "t2" },
+      { date: "2025-10-13", amount: -100, description: "Saque Digital", externalId: "t3" },
+      { date: "2025-10-20", amount: -419.17, description: "CONTAGRO ASSESSORIA CONTABIL LTDA", externalId: "t4" },
+    ];
+    const { drafts, ignored } = await categorizeStatementRows(ctx, rows, "C6");
+    const cat = (id: string) => drafts.find((d) => d.externalId === id)?.category;
+    console.log("[eval] categorize →", drafts.map((d) => [d.externalId, d.category]), "ignored:", ignored);
+    expect(cat("t1")).toBe("Prolabore");
+    expect(cat("t2")).toBe("Prolabore");
+    expect(cat("t3")).toBe("Prolabore");
+    expect(cat("t4")).toBe("Contabilidade");
+    expect(ignored).toBe(0);
   });
 });

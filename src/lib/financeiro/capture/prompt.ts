@@ -17,7 +17,7 @@ Para cada mensagem devolva uma lista de ações:
 - clarify: falta o valor, ou a mensagem não é sobre dinheiro. question = pergunta curta e direta.
 
 Regras:
-- category: SEMPRE uma das categorias da lista, escrita exatamente igual. Escolha pela natureza do gasto: mfit, Gamma, madeleads, ChatGPT/IA usado na empresa → Ferramentas e plataformas; curso, mentoria, workshop, livro → Conhecimento; anúncio, ads, Meta, impulsionar → Tráfego pago; contadora/contador → Contabilidade; DAS → Impostos Simples; retirada pessoal, terapia ou despesa pessoal paga pela empresa → Prolabore; CREF, telefone, café, escritório → Outras despesas.
+- category: SEMPRE uma das categorias da lista, escrita exatamente igual. Escolha pela natureza do gasto: mfit, Gamma, madeleads, ChatGPT/IA usado na empresa → Ferramentas e plataformas; curso, mentoria, workshop, livro → Conhecimento; anúncio, ads, Meta, impulsionar → Tráfego pago; contadora/contador → Contabilidade; DAS → Impostos Simples; retirada pessoal, saque em dinheiro, terapia ou despesa pessoal paga pela empresa (padaria, mercado, restaurante, farmácia, compras pessoais) → Prolabore; CREF, telefone, café, escritório → Outras despesas.
 - confidence "baixa" quando duas categorias são plausíveis; liste em alternatives as outras opções (até 2, da lista). Senão "alta" e alternatives [].
 - paymentMethod: uma das formas da lista ou null. Pistas: "pix" numa despesa → "Pix/débito PJ"; "cartão da natália" → "Cartão crédito (Natália)"; "nubank" ou "meu cartão" → "Cartão crédito (Nubank PF)"; "no C6" ou "pix" numa receita → "Pix C6"; "link", "infinity", "maquininha" → "InfinitePay".
 - status: "pago" se já aconteceu (paguei, gastei, recebi, caiu, foi pago); "pendente" se é futuro (vence dia 31, tenho que pagar, vai cair).
@@ -68,7 +68,8 @@ export const CATEGORIZE_SYSTEM = `Você classifica linhas de extrato bancário o
 - O sinal já define o tipo: valor positivo é receita, negativo é despesa.
 - description: curta e legível ("PIX ENVIADO MFIT LTDA" → "mfit"; "PIX RECEBIDO ALESKA DA ROSA" → "Aleska").
 - Pix recebido de pessoa que está na lista de alunos → receita de consultoria; clientName = nome da lista; se não souber o plano, use "Consultoria anual" com confidence "baixa".
-- Transferência entre contas do próprio Fernando, pagamento de fatura de cartão, aplicação ou resgate de investimento → category "IGNORAR".
+- Dinheiro que a conta da empresa envia ao Fernando pessoa física (Pix ou TED para ele ou para a conta pessoal dele), saque em dinheiro e compra pessoal paga pela conta da empresa (padaria, mercado, restaurante, farmácia, terapia, compras pessoais) → category "Prolabore": é retirada, não ignore.
+- "IGNORAR" só para pagamento da fatura do cartão da empresa, aplicação ou resgate de investimento e transferência entre duas contas da própria empresa.
 - confidence "baixa" quando duas categorias são plausíveis, com as outras em alternatives (até 2).
 - paymentMethod: uma das formas da conta do arquivo, ou null.
 - Devolva um item por linha, com o mesmo index.`;

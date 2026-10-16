@@ -222,8 +222,8 @@ são clientes finos dessa rota. Nenhuma lógica financeira mora neles.
 ### 3.2 Interpretação por contexto (regra central)
 
 Linguagem livre, nunca match de frase. Regra registrada em memória do projeto
-(`feedback_contexto_nao_frase_literal`). O interpretador é um modelo Claude (constante única de
-modelo no código, padrão o Sonnet mais recente) chamado com **tool use / saída estruturada** e
+(`feedback_contexto_nao_frase_literal`). O interpretador é um modelo Claude (um modelo por tarefa no
+código, padrão Haiku 5.5; a tarefa que falhar na avaliação com frases reais sobe para Sonnet 5.5) chamado com **tool use / saída estruturada** e
 um contexto montado a cada chamada com:
 
 - as categorias (com grupo) e formas de pagamento oficiais;

@@ -17,7 +17,7 @@
 - **Após `prisma generate`, reiniciar o servidor de dev.**
 - **O banco do `.env` é o de produção (Neon).** Nada de apagar ou alterar dado existente fora do que a task manda. Testes unitários nunca tocam no banco.
 - **Módulos puros não importam `@/lib/prisma`.** Quem importa Prisma fica em arquivo separado (`*Loader.ts`, `setup.ts`, `apply.ts`, `run.ts`, `data.ts`, rotas).
-- **Modelo do Claude:** constante única `FINANCE_MODEL = "claude-opus-5-5"`. Em Opus 5.5, `tool_choice` forçado (`any`/`tool`) dá 400 e `thinking: disabled` dá 400: usar saída estruturada (`output_config.format`) para JSON e `tool_choice` automático (padrão) no loop de perguntas. Sempre checar `stop_reason === "refusal"` antes de ler o conteúdo.
+- **Modelo do Claude, decidido com o Fernando:** **Haiku 5.5 (`claude-haiku-5-5`) em tudo**, com um modelo por tarefa no objeto `FINANCE_MODELS` (`capture`, `ask`, `categorize`, `document`). Regra de troca: a tarefa que falhar na bateria de avaliação (`npm run eval:finance`) passa a usar `claude-sonnet-5-5`, só ela; as outras ficam no Haiku. Não ajustar para Opus sem pedido explícito dele. Não usar `tool_choice` forçado (`any`/`tool`) nem `thinking: disabled`: usar saída estruturada (`output_config.format`) para JSON e `tool_choice` automático (padrão) no loop de perguntas, o que funciona igual em Haiku 5.5 e Sonnet 5.5. Sempre checar `stop_reason === "refusal"` antes de ler o conteúdo.
 - **Linguagem livre, nunca match de frase** (memória `feedback_contexto_nao_frase_literal`). Não escrever regex para interpretar mensagens financeiras; quem interpreta é o modelo, o código só valida.
 - **Datas:** strings `YYYY-MM-DD` no domínio; gravar no banco com `new Date(\`${iso}T12:00:00\`)` (padrão do projeto). "Hoje" é sempre em `America/Sao_Paulo`.
 - **Vocabulário oficial** (Parte 1 da spec), gravado em `FinancialConfig`:
@@ -34,7 +34,7 @@
 2. O interpretador ganha a ação `recategorize` (resposta a "é ferramenta" por voz) além de `create | settle | undo | clarify`.
 3. Os dois crons mensais viram **um** slot `monthly` (dia 1, 09h BRT): lança os fixos e pede o extrato no mesmo aviso.
 4. Linhas de extrato que são transferência entre contas próprias, pagamento de fatura ou aplicação/resgate são **ignoradas** (categoria `IGNORAR`), para não contar em dobro com a fatura do cartão.
-5. Modelo `claude-opus-5-5` (o padrão atual), não Sonnet.
+5. Modelo: Haiku 5.5 em tudo, um modelo por tarefa; a tarefa que falhar na avaliação com frases reais sobe para Sonnet 5.5 (decisão do Fernando, 2026-10-16, por custo: ~R$5–20/mês contra ~R$100 com Opus).
 
 ---
 
@@ -680,7 +680,7 @@ Em `docs/superpowers/specs/2026-10-15-financeiro-fgt-captura-e-planilha-design.m
 2. O interpretador tem também a ação `recategorize` (responder "é ferramenta" por voz).
 3. Os dois crons mensais viraram um slot `monthly` (dia 1, 09h BRT).
 4. Linhas de extrato de transferência entre contas próprias, pagamento de fatura ou aplicação/resgate são ignoradas (`IGNORAR`), para não contar em dobro com a fatura do cartão.
-5. Modelo `claude-opus-5-5`.
+5. Modelo: Haiku 5.5 em tudo, um modelo por tarefa (`capture`, `ask`, `categorize`, `document`). A tarefa que falhar na avaliação com frases reais (`npm run eval:finance`) sobe para Sonnet 5.5, só ela.
 ```
 
 - [ ] **Step 14: Rodar a suíte, checar tipos e commitar**
@@ -1852,7 +1852,7 @@ export function emptyResult(): CaptureResult;
 
   - `prompt.ts`: `INTERPRET_SYSTEM`, `INTERPRET_SCHEMA`, `CATEGORIZE_SYSTEM`, `CATEGORIZE_SCHEMA`, `PDF_SYSTEM`, `PDF_SCHEMA`, `buildContextText(ctx: CaptureContext): string`.
   - `parse.ts`: `matchClient(clients, name): string | null`, `validateCreate(a: RawAction, ctx): CreateAction | ClarifyAction`, `validateActions(raw: RawAction[], ctx): CaptureAction[]`.
-  - `interpret.ts`: `FINANCE_MODEL`, `type ImageMime`, `type InterpretInput = { kind: "text"; text: string } | { kind: "image"; imageBase64: string; mimeType: ImageMime; caption: string | null }`, `interpret(ctx, input): Promise<CaptureAction[]>`, `categorizeStatementRows(ctx, rows: StatementRow[], account: string): Promise<{ drafts: TxDraft[]; ignored: number }>`, `extractPdfStatement(base64: string): Promise<ParsedStatement>`, `class InterpretError extends Error`.
+  - `interpret.ts`: `FINANCE_MODELS: { capture: string; ask: string; categorize: string; document: string }` (todos `"claude-haiku-5-5"` de início), `type ImageMime`, `type InterpretInput = { kind: "text"; text: string } | { kind: "image"; imageBase64: string; mimeType: ImageMime; caption: string | null }`, `interpret(ctx, input): Promise<CaptureAction[]>`, `categorizeStatementRows(ctx, rows: StatementRow[], account: string): Promise<{ drafts: TxDraft[]; ignored: number }>`, `extractPdfStatement(base64: string): Promise<ParsedStatement>`, `class InterpretError extends Error`.
   - `context.ts`: `loadCaptureContext(userId: string): Promise<{ ctx: CaptureContext; ledger: LedgerEntry[] }>`.
 
 - [ ] **Step 1: Criar `types.ts`**
@@ -2379,7 +2379,14 @@ import {
 import { validateActions, validateCreate } from "./parse";
 import type { CaptureAction, CaptureContext, RawAction, TxDraft } from "./types";
 
-export const FINANCE_MODEL = "claude-opus-5-5";
+// Um modelo por tarefa. Padrão Haiku 5.5 (decisão de custo do Fernando).
+// A tarefa que falhar em `npm run eval:finance` sobe para "claude-sonnet-5-5", só ela.
+export const FINANCE_MODELS = {
+  capture: "claude-haiku-5-5",    // interpretar texto/voz
+  ask: "claude-haiku-5-5",        // responder perguntas (loop com ferramentas)
+  categorize: "claude-haiku-5-5", // categorizar linhas de extrato
+  document: "claude-haiku-5-5",   // ler foto de comprovante e extrato em PDF
+} as const;
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -2392,13 +2399,14 @@ export type InterpretInput =
 export class InterpretError extends Error {}
 
 async function structured<T>(params: {
+  model: string;
   system: string;
   schema: Record<string, unknown>;
   content: Anthropic.ContentBlockParam[];
   maxTokens: number;
 }): Promise<T> {
   const res = await client.messages.create({
-    model: FINANCE_MODEL,
+    model: params.model,
     max_tokens: params.maxTokens,
     system: params.system,
     output_config: { effort: "low", format: { type: "json_schema", schema: params.schema } },
@@ -2425,6 +2433,7 @@ export async function interpret(ctx: CaptureContext, input: InterpretInput): Pro
           },
         ];
   const out = await structured<{ actions: RawAction[] }>({
+    model: input.kind === "text" ? FINANCE_MODELS.capture : FINANCE_MODELS.document,
     system: INTERPRET_SYSTEM, schema: INTERPRET_SCHEMA, content, maxTokens: 4000,
   });
   return validateActions(out.actions ?? [], ctx);
@@ -2457,6 +2466,7 @@ export async function categorizeStatementRows(
     batches.map((batch) => {
       const lines = batch.map((r, i) => `${i} | ${r.date} | ${r.amount >= 0 ? "+" : "-"}${fmtBRL(Math.abs(r.amount))} | ${r.description}`);
       return structured<{ items: CategorizedItem[] }>({
+        model: FINANCE_MODELS.categorize,
         system: CATEGORIZE_SYSTEM,
         schema: CATEGORIZE_SCHEMA,
         maxTokens: 16000,
@@ -2506,6 +2516,7 @@ export async function extractPdfStatement(base64: string): Promise<ParsedStateme
     closingBalance: { amount: number; date: string } | null;
     isCard: boolean;
   }>({
+    model: FINANCE_MODELS.document,
     system: PDF_SYSTEM,
     schema: PDF_SCHEMA,
     maxTokens: 16000,
@@ -2614,9 +2625,16 @@ Criar `src/lib/financeiro/capture/interpret.eval.ts` (as frases reais da tabela 
 
 ```ts
 import { describe, it, expect } from "vitest";
-import { interpret } from "./interpret";
+import { existsSync, readFileSync } from "node:fs";
+import { extractPdfStatement, interpret, FINANCE_MODELS } from "./interpret";
 import { buildVocab, planSeed, type ConfigRow } from "../vocab";
 import type { CaptureContext, CreateAction } from "./types";
+
+// Arquivos reais do Fernando (dados pessoais): ficam fora do git, ver .gitignore.
+const FIXTURES = "src/lib/financeiro/__fixtures__";
+const RECEIPT = `${FIXTURES}/comprovante.jpg`;
+const PDF = `${FIXTURES}/extrato.pdf`;
+console.log("[eval] modelos:", FINANCE_MODELS);
 
 const seedRows: ConfigRow[] = planSeed([]).create.map((c, i) => ({
   id: String(i), type: c.type, value: c.value, group: c.group, account: c.account, active: true, order: c.order,
@@ -2629,12 +2647,21 @@ const ctx: CaptureContext = {
   ],
   recent: [
     { ref: "tx:mfit", kind: "despesa", description: "mfit", category: "Ferramentas e plataformas", amount: 39.9, date: "2026-10-16", needsReview: false },
+    { ref: "tx:gpt", kind: "despesa", description: "ChatGPT", category: "Ferramentas e plataformas", amount: 57, date: "2026-10-16", needsReview: true },
   ],
   clients: [{ id: "c1", name: "Aleska da Rosa Eli" }],
 };
 const first = async (text: string) => (await interpret(ctx, { kind: "text", text }))[0];
 
-describe("interpretação real (gasta API)", () => {
+describe("interpretação real — capture (gasta API)", () => {
+  it("transcrição de voz por extenso", async () => {
+    expect(await first("paguei trinta e nove reais de mfit no pix")).toMatchObject({
+      action: "create", kind: "despesa", amount: 39, category: "Ferramentas e plataformas",
+    });
+  });
+  it("é conhecimento → recategoriza o recente a revisar", async () => {
+    expect(await first("o do chatgpt é conhecimento")).toEqual({ action: "recategorize", ref: "tx:gpt", category: "Conhecimento" });
+  });
   it("paguei 39 mfit pix", async () => {
     expect(await first("paguei 39 mfit pix")).toMatchObject({
       action: "create", kind: "despesa", amount: 39, category: "Ferramentas e plataformas", paymentMethod: "Pix/débito PJ", status: "pago",
@@ -2673,10 +2700,43 @@ describe("interpretação real (gasta API)", () => {
     expect(await first("apaga esse do mfit")).toEqual({ action: "undo", ref: "tx:mfit" });
   });
 });
+
+describe("interpretação real — document (gasta API, precisa dos arquivos do Fernando)", () => {
+  it.skipIf(!existsSync(RECEIPT))("comprovante vira um lançamento com valor", async () => {
+    const actions = await interpret(ctx, {
+      kind: "image", imageBase64: readFileSync(RECEIPT).toString("base64"), mimeType: "image/jpeg", caption: null,
+    });
+    const create = actions.find((a) => a.action === "create") as CreateAction | undefined;
+    console.log("[eval] comprovante →", create);
+    expect(create?.amount).toBeGreaterThan(0);
+  });
+  it.skipIf(!existsSync(PDF))("extrato em PDF: linhas com data e valor, sem inventar", async () => {
+    const parsed = await extractPdfStatement(readFileSync(PDF).toString("base64"));
+    console.log("[eval] PDF →", parsed.rows.length, "linhas; primeiras:", parsed.rows.slice(0, 3), "saldo:", parsed.ledgerBalance);
+    expect(parsed.rows.length).toBeGreaterThan(0);
+    for (const r of parsed.rows) {
+      expect(r.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(r.amount).not.toBe(0);
+    }
+  });
+});
 ```
 
+Adicionar ao `.gitignore` do projeto (os arquivos de teste são documentos financeiros reais):
+
+```
+# comprovantes e extratos reais usados só na avaliação local
+src/lib/financeiro/__fixtures__/
+```
+
+Os testes de documento ficam marcados como "skipped" até o Fernando colocar um comprovante (`comprovante.jpg`) e um extrato em PDF (`extrato.pdf`) nessa pasta, na Task 15. Para o PDF, além do teste passar, **confira o número de linhas e as 3 primeiras contra o PDF aberto**: é assim que se pega linha pulada ou inventada.
+
 Run: `npm run eval:finance`
-Expected: 8 PASS (gasta ~8 chamadas de API). Se algum falhar, ajuste **o texto de `INTERPRET_SYSTEM`** (regras de categoria/forma), nunca o código de validação, e rode de novo. O caso "chatgpt" aceita qualquer uma das duas categorias de propósito: o que importa é cair numa delas.
+Expected: 10 PASS em "capture" e 2 skipped em "document" (gasta ~10 chamadas de API no Haiku, centavos). O caso "chatgpt" aceita qualquer uma das duas categorias de propósito: o que importa é cair numa delas.
+
+Se algum caso de "capture" falhar:
+1. Primeiro ajuste **o texto de `INTERPRET_SYSTEM`** (regras de categoria/forma), nunca o código de validação, e rode de novo. No máximo 2 rodadas de ajuste.
+2. Se continuar falhando, troque `FINANCE_MODELS.capture` para `"claude-sonnet-5-5"` e rode de novo. Registre a troca na mensagem do commit (ex.: "capture usa Sonnet 5.5: Haiku errou baixa da contadora").
 
 - [ ] **Step 10: Checar tipos, rodar a suíte e commitar**
 
@@ -2684,7 +2744,7 @@ Run: `npx tsc --noEmit && npm test`
 Expected: sem erros; todos PASS (a suíte `.eval.ts` não roda no `npm test`).
 
 ```bash
-git add src/lib/financeiro/capture/types.ts src/lib/financeiro/capture/prompt.ts src/lib/financeiro/capture/parse.ts src/lib/financeiro/capture/parse.test.ts src/lib/financeiro/capture/interpret.ts src/lib/financeiro/capture/context.ts src/lib/financeiro/capture/interpret.eval.ts vitest.eval.config.ts package.json
+git add src/lib/financeiro/capture/types.ts src/lib/financeiro/capture/prompt.ts src/lib/financeiro/capture/parse.ts src/lib/financeiro/capture/parse.test.ts src/lib/financeiro/capture/interpret.ts src/lib/financeiro/capture/context.ts src/lib/financeiro/capture/interpret.eval.ts vitest.eval.config.ts package.json .gitignore
 git commit -m "feat(finance): context-aware Claude interpreter for free-form capture
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -3378,14 +3438,15 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Create: `src/lib/financeiro/ask/tools.ts`, `src/lib/financeiro/ask/tools.test.ts`
 - Create: `src/lib/financeiro/ask/data.ts`
 - Create: `src/lib/financeiro/ask/answer.ts`
+- Create: `src/lib/financeiro/ask/answer.eval.ts`
 
 **Interfaces:**
-- Consumes: `LedgerEntry`, `entriesBetween` (Task 2); `Vocab`, `groupOfCategory`, `accountOfMethod`, `accountsOf`, `normalizeLabel`, `ExpenseGroup` (Task 1); `estimateBalance`, `latestSnapshot`, `BalanceSnapshot` (Task 5); `round2`, `isoDate`, `todaySaoPaulo` (Task 1); `ensureFinanceSetup` (Task 1); `loadLedger` (Task 2); `FINANCE_MODEL` (Task 7).
+- Consumes: `LedgerEntry`, `entriesBetween` (Task 2); `Vocab`, `groupOfCategory`, `accountOfMethod`, `accountsOf`, `normalizeLabel`, `ExpenseGroup` (Task 1); `estimateBalance`, `latestSnapshot`, `BalanceSnapshot` (Task 5); `round2`, `isoDate`, `todaySaoPaulo` (Task 1); `ensureFinanceSetup` (Task 1); `loadLedger` (Task 2); `FINANCE_MODELS` (Task 7); `vitest.eval.config.ts` e o script `eval:finance` (Task 7).
 - Produces:
   - `type AskData = { today: string; ledger: LedgerEntry[]; vocab: Vocab; snapshots: BalanceSnapshot[]; monthlyGoal: number; goals: Record<string, number> }`.
   - `openBills`, `periodSummary`, `monthResult`, `spendingByCategory`, `goalsProgress`, `balances`, `toReview`, `ASK_TOOLS: Anthropic.Tool[]`, `runAskTool(name: string, input: unknown, d: AskData): unknown`.
   - `data.ts`: `loadAskData(userId: string): Promise<AskData>`.
-  - `answer.ts`: `answerFinanceQuestion(pergunta: string): Promise<string>`.
+  - `answer.ts`: `answerFinanceQuestion(pergunta: string): Promise<string>`, `answerWithData(pergunta: string, data: AskData): Promise<string>`.
 
 - [ ] **Step 1: Escrever o teste**
 
@@ -3752,9 +3813,9 @@ Criar `src/lib/financeiro/ask/answer.ts`:
 
 import Anthropic from "@anthropic-ai/sdk";
 import { getDefaultUser } from "@/lib/user";
-import { FINANCE_MODEL } from "../capture/interpret";
+import { FINANCE_MODELS } from "../capture/interpret";
 import { loadAskData } from "./data";
-import { ASK_TOOLS, runAskTool } from "./tools";
+import { ASK_TOOLS, runAskTool, type AskData } from "./tools";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const MAX_TURNS = 6;
@@ -3768,12 +3829,16 @@ Hoje é ${today}. "Essa semana" vai até o próximo domingo.`;
 
 export async function answerFinanceQuestion(pergunta: string): Promise<string> {
   const user = await getDefaultUser();
-  const data = await loadAskData(user.id);
+  return answerWithData(pergunta, await loadAskData(user.id));
+}
+
+// Separada para a avaliação rodar com dados sintéticos, sem banco.
+export async function answerWithData(pergunta: string, data: AskData): Promise<string> {
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: pergunta }];
 
   for (let turn = 0; turn < MAX_TURNS; turn++) {
     const res = await client.messages.create({
-      model: FINANCE_MODEL,
+      model: FINANCE_MODELS.ask,
       max_tokens: 4000,
       system: systemPrompt(data.today),
       tools: ASK_TOOLS,
@@ -3806,7 +3871,86 @@ export async function answerFinanceQuestion(pergunta: string): Promise<string> {
 }
 ```
 
-- [ ] **Step 7: Checar tipos, rodar a suíte e commitar**
+- [ ] **Step 7: Avaliação real das perguntas (Haiku)**
+
+Criar `src/lib/financeiro/ask/answer.eval.ts`. Usa os mesmos dados sintéticos do `tools.test.ts`, então cada resposta tem um número certo conhecido:
+
+```ts
+import { describe, it, expect } from "vitest";
+import { answerWithData } from "./answer";
+import type { AskData } from "./tools";
+import { buildVocab, planSeed, type ConfigRow } from "../vocab";
+import type { LedgerEntry } from "../ledger";
+
+const seedRows: ConfigRow[] = planSeed([]).create.map((c, i) => ({
+  id: String(i), type: c.type, value: c.value, group: c.group, account: c.account, active: true, order: c.order,
+}));
+const e = (p: Partial<LedgerEntry> & Pick<LedgerEntry, "ref">): LedgerEntry => ({
+  kind: "despesa", amount: 100, category: "Outras despesas", description: "x", status: "pago", date: "2026-10-05",
+  dueDate: null, paidAt: "2026-10-05", paymentMethod: "Pix/débito PJ", clientName: null, source: "manual",
+  needsReview: false, ...p,
+});
+const data: AskData = {
+  today: "2026-10-16",
+  vocab: buildVocab(seedRows),
+  snapshots: [{ account: "C6", balance: 5000, asOf: "2026-10-01" }],
+  monthlyGoal: 35000,
+  goals: { reserva_fin: 10000 },
+  ledger: [
+    e({ ref: "tx:rec", kind: "receita", amount: 10000, category: "Consultoria anual", paymentMethod: "Pix C6" }),
+    e({ ref: "tx:pro", amount: 4000, category: "Prolabore" }),
+    e({ ref: "tx:ads", amount: 1000, category: "Tráfego pago", paymentMethod: "Cartão crédito (Nubank PF)" }),
+    e({ ref: "tx:res", amount: 500, category: "Reserva Financeira" }),
+    e({ ref: "tx:cref", amount: 444, status: "pendente", date: "2026-10-31", dueDate: "2026-10-31", paidAt: null, description: "CREF" }),
+    e({ ref: "tx:atras", amount: 398, status: "pendente", date: "2026-10-10", dueDate: "2026-10-10", paidAt: null, description: "Contabilidade" }),
+  ],
+};
+// Aceita "398", "398,00" e "R$ 398" — o que importa é o número certo aparecer.
+const has = (text: string, n: string) => text.replace(/\./g, "").includes(n);
+
+describe("perguntas reais — ask (gasta API)", () => {
+  it("o que temos que pagar hoje? → só a Contabilidade atrasada", async () => {
+    const t = await answerWithData("o que temos que pagar hoje?", data);
+    console.log("[eval]", t);
+    expect(t).toMatch(/contabilidade/i);
+    expect(has(t, "398")).toBe(true);
+    expect(t).not.toMatch(/cref/i);
+  });
+  it("quais contas estão em aberto? → as duas, total 842", async () => {
+    const t = await answerWithData("quais contas estão em aberto?", data);
+    console.log("[eval]", t);
+    expect(t).toMatch(/cref/i);
+    expect(t).toMatch(/contabilidade/i);
+  });
+  it("qual nosso saldo no C6? → 10.500 estimado, citando a base", async () => {
+    // 5.000 (extrato de 01/10) + 10.000 (Pix C6) − 4.000 (prolabore) − 500 (reserva)
+    const t = await answerWithData("qual nosso saldo no C6?", data);
+    console.log("[eval]", t);
+    expect(has(t, "10500")).toBe(true);
+    expect(t).toMatch(/estimad/i);
+  });
+  it("qual o resultado do mês? → 5.000", async () => {
+    // 10.000 de receita − 4.000 fixo − 1.000 investimento; reserva fica abaixo do resultado
+    const t = await answerWithData("qual o resultado do mês?", data);
+    console.log("[eval]", t);
+    expect(has(t, "5000")).toBe(true);
+  });
+  it("quanto falta pra meta? → 25.000", async () => {
+    const t = await answerWithData("quanto falta pra bater a meta do mês?", data);
+    console.log("[eval]", t);
+    expect(has(t, "25000")).toBe(true);
+  });
+});
+```
+
+Run: `npm run eval:finance`
+Expected: os 5 casos de "ask" PASS (além dos da Task 7). Leia também as respostas impressas: precisam soar naturais para serem faladas pelo Jarvis.
+
+Se algum falhar:
+1. Ajuste primeiro o `systemPrompt` de `answer.ts` ou a `description` da ferramenta envolvida. No máximo 2 rodadas.
+2. Se continuar falhando, troque `FINANCE_MODELS.ask` para `"claude-sonnet-5-5"`, rode de novo e registre a troca na mensagem do commit.
+
+- [ ] **Step 8: Checar tipos, rodar a suíte e commitar**
 
 Run: `npx tsc --noEmit && npm test`
 Expected: sem erros; todos PASS.
@@ -4706,10 +4850,14 @@ Esta task grava dados reais. **Cada passo que grava precisa do "pode" do Fernand
 Run: `npm test && npx tsc --noEmit && npm run lint && npm run build`
 Expected: tudo verde. `npm run build` roda `prisma generate && next build`.
 
-- [ ] **Step 2: Avaliação real do interpretador**
+- [ ] **Step 2: Avaliação real com os arquivos do Fernando**
+
+Pedir a ele um comprovante real (foto) e um extrato em PDF (C6 ou Nubank). Salvar como `src/lib/financeiro/__fixtures__/comprovante.jpg` e `src/lib/financeiro/__fixtures__/extrato.pdf` (pasta no `.gitignore`; confira com `git status` que não aparecem).
 
 Run: `npm run eval:finance`
-Expected: 8 PASS. Se algo falhou depois de mexer no prompt, não siga sem resolver.
+Expected: tudo PASS e nada "skipped" (10 de capture, 2 de document, 5 de ask). Confira com ele o que o teste imprimiu para o comprovante e para o PDF (valor, quantidade de linhas, 3 primeiras linhas e saldo).
+
+Se "document" falhar ou o PDF vier com linha pulada/inventada, aplique a mesma regra das outras tarefas: troque `FINANCE_MODELS.document` para `"claude-sonnet-5-5"`, rode de novo e commite a troca explicando o motivo. Anote no fim desta task quais tarefas ficaram em Haiku e quais subiram para Sonnet.
 
 - [ ] **Step 3: Deploy**
 

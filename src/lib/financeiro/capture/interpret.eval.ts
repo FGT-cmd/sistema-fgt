@@ -18,12 +18,13 @@ const ctx: CaptureContext = {
   vocab: buildVocab(seedRows),
   openItems: [
     { ref: "tx:cont", kind: "despesa", description: "Contabilidade", category: "Contabilidade", amount: 398, dueDate: "2026-10-10", clientName: null },
+    { ref: "inst:i9", kind: "receita", description: "Consultoria anual (2/12)", category: "Venda", amount: 1800, dueDate: "2026-10-10", clientName: "Aleska da Rosa Eli" },
   ],
   recent: [
     { ref: "tx:mfit", kind: "despesa", description: "mfit", category: "Ferramentas e plataformas", amount: 39.9, date: "2026-10-16", needsReview: false },
     { ref: "tx:gpt", kind: "despesa", description: "ChatGPT", category: "Ferramentas e plataformas", amount: 57, date: "2026-10-16", needsReview: true },
   ],
-  clients: [{ id: "c1", name: "Aleska da Rosa Eli" }],
+  clients: [{ id: "c1", name: "Aleska da Rosa Eli" }, { id: "c2", name: "Bruna Tavares" }],
 };
 const first = async (text: string) => (await interpret(ctx, { kind: "text", text }))[0];
 
@@ -54,9 +55,24 @@ describe("interpretação real — capture (gasta API)", () => {
   it("a contadora já tá paga, deu 407,29 → baixa com valor", async () => {
     expect(await first("a contadora já tá paga, deu 407,29")).toMatchObject({ action: "settle", ref: "tx:cont", amount: 407.29 });
   });
-  it("recebi 1800 da Aleska anual no C6", async () => {
-    expect(await first("recebi 1800 da Aleska anual no C6")).toMatchObject({
-      action: "create", kind: "receita", amount: 1800, category: "Consultoria anual", paymentMethod: "Pix C6", clientId: "c1",
+  it("paguei 398 contadora pix → baixa da conta em aberto, não lançamento novo", async () => {
+    const actions = await interpret(ctx, { kind: "text", text: "paguei 398 contadora pix" });
+    expect(actions).toHaveLength(1);
+    expect(actions[0]).toMatchObject({ action: "settle", ref: "tx:cont" });
+  });
+  it("a Aleska pagou 1800 no pix → baixa da parcela em aberto", async () => {
+    const actions = await interpret(ctx, { kind: "text", text: "a Aleska pagou 1800 no pix" });
+    expect(actions).toHaveLength(1);
+    expect(actions[0]).toMatchObject({ action: "settle", ref: "inst:i9" });
+  });
+  it("recebi 1800 da Aleska anual no C6 → com parcela em aberto, é baixa", async () => {
+    const actions = await interpret(ctx, { kind: "text", text: "recebi 1800 da Aleska anual no C6" });
+    expect(actions).toHaveLength(1);
+    expect(actions[0]).toMatchObject({ action: "settle", ref: "inst:i9" });
+  });
+  it("recebi 1800 da Bruna anual no C6 → aluna sem item em aberto, é lançamento novo", async () => {
+    expect(await first("recebi 1800 da Bruna anual no C6")).toMatchObject({
+      action: "create", kind: "receita", amount: 1800, category: "Consultoria anual", paymentMethod: "Pix C6", clientId: "c2",
     });
   });
   it("vence dia 31 o CREF, 444 → a pagar", async () => {

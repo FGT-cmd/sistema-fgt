@@ -66,17 +66,19 @@ describe("validateActions", () => {
     expect(bad.action).toBe("clarify");
   });
 
-  it("undo aceita ref recente ou null; recategorize exige ref recente e categoria válida", () => {
+  it("undo aceita ref recente ou null; ref desconhecido pergunta; recategorize exige ref recente e categoria válida", () => {
     const res = validateActions([
       raw({ action: "undo", ref: "tx:gpt" }),
       raw({ action: "undo", ref: "tx:outro" }),
+      raw({ action: "undo", ref: null }),
       raw({ action: "recategorize", ref: "tx:gpt", category: "conhecimento" }),
       raw({ action: "recategorize", ref: "tx:gpt", category: "Nada" }),
     ], ctx);
     expect(res[0]).toEqual({ action: "undo", ref: "tx:gpt" });
-    expect(res[1]).toEqual({ action: "undo", ref: null });
-    expect(res[2]).toEqual({ action: "recategorize", ref: "tx:gpt", category: "Conhecimento" });
-    expect(res[3].action).toBe("clarify");
+    expect(res[1]).toEqual({ action: "clarify", question: "Qual lançamento você quer desfazer?" });
+    expect(res[2]).toEqual({ action: "undo", ref: null });
+    expect(res[3]).toEqual({ action: "recategorize", ref: "tx:gpt", category: "Conhecimento" });
+    expect(res[4].action).toBe("clarify");
   });
 
   it("data impossível vira hoje em create e em settle", () => {

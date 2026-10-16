@@ -5,8 +5,11 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getDefaultUser } from "@/lib/user";
 import { splitRef } from "../ledger";
-import { fmtBRL, toDbDate, todaySaoPaulo } from "../dates";
+import { fmtBRL, isValidIsoDate, toDbDate, todaySaoPaulo } from "../dates";
 import { summarizeCapture } from "./summary";
+import {
+  isEmptyUndo, splitKnownDrafts, takeUndoPart, undoHasRef, type PrevState, type UndoPayload,
+} from "./pendingLogic";
 import {
   emptyResult,
   type CaptureAction, type CaptureResult, type Channel, type SettleProposal, type TxDraft,
@@ -15,8 +18,6 @@ import {
 const OWNER = "owner";
 const HOUR = 3_600_000;
 
-type PrevState = { status: string; paidAt: string | null; amount: number; paymentMethod: string | null };
-type UndoPayload = { created: string[]; settled: { ref: string; prev: PrevState }[] };
 type QuestionPayload = { txId: string; options: string[] };
 type ConfirmPayload = {
   drafts: TxDraft[];
@@ -29,6 +30,8 @@ type ConfirmPayload = {
 type CorrectionPayload = { proposalText: string };
 
 const expiresIn = (hours: number) => new Date(Date.now() + hours * HOUR);
+
+export const UNDO_FAILED_MSG = "Não consegui desfazer agora. Tenta de novo.";
 
 type Db = Prisma.TransactionClient;
 // Statements can have dozens of rows; the default 5s interactive-transaction timeout is too tight.
@@ -145,12 +148,19 @@ async function dropQuestionsFor(db: Db, txId: string): Promise<void> {
   if (ids.length) await db.capturePending.deleteMany({ where: { id: { in: ids } } });
 }
 
-export async function revertUndo(undoId: string): Promise<string[]> {
-  const rec = await prisma.capturePending.findUnique({ where: { id: undoId } });
-  if (!rec || rec.kind !== "undo" || rec.chatId !== OWNER || rec.expiresAt < new Date()) return [];
-  const payload = rec.payload as UndoPayload;
+const settledLabel = (s: { ref: string; prev: PrevState }) =>
+  `baixa de ${s.ref.startsWith("inst:") ? "parcela" : "conta"} (${fmtBRL(s.prev.amount)}) voltou a ficar em aberto`;
+
+// Desfaz o registro inteiro (botão "Desfazer" do Telegram, "desfaz o último").
+// [] = nada pra desfazer (expirado, já desfeito); null = falha ao gravar.
+export async function revertUndo(undoId: string): Promise<string[] | null> {
   try {
     return await prisma.$transaction(async (db) => {
+      // Lock + read inside the transaction: a concurrent partial undo can't leave us a stale payload.
+      await db.$executeRaw`SELECT id FROM "CapturePending" WHERE id = ${undoId} FOR UPDATE`;
+      const rec = await db.capturePending.findUnique({ where: { id: undoId } });
+      if (!rec || rec.kind !== "undo" || rec.chatId !== OWNER || rec.expiresAt < new Date()) return [];
+      const payload = rec.payload as UndoPayload;
       // Claim first: a second tap finds count 0 and does nothing.
       const { count } = await db.capturePending.deleteMany({
         where: { id: undoId, kind: "undo", chatId: OWNER, expiresAt: { gt: new Date() } },
@@ -162,27 +172,65 @@ export async function revertUndo(undoId: string): Promise<string[]> {
       for (const s of payload.settled) await restoreRef(db, s.ref, s.prev);
       return [
         ...created.map((t) => `${t.description} ${fmtBRL(t.amount)}`),
-        ...payload.settled.map((s) => `baixa de ${s.ref.startsWith("inst:") ? "parcela" : "conta"} (${fmtBRL(s.prev.amount)}) voltou a ficar em aberto`),
+        ...payload.settled.map(settledLabel),
       ];
     }, TX_OPTS);
   } catch (err) {
     console.error("[finance/revertUndo]", err);
-    return [];
+    return null;
   }
 }
 
-async function undoMatching(ref: string | null): Promise<string[]> {
-  const records = await prisma.capturePending.findMany({
-    where: { chatId: OWNER, kind: "undo", expiresAt: { gt: new Date() } },
-    orderBy: { createdAt: "desc" },
-  });
-  const target = ref
-    ? records.find((r) => {
-        const p = r.payload as UndoPayload;
-        return p.created.includes(splitRef(ref)[1]) || p.settled.some((s) => s.ref === ref);
-      })
-    : records[0];
-  return target ? revertUndo(target.id) : [];
+// Desfaz só o lançamento/baixa que o ref aponta; o resto do registro continua desfazível.
+async function revertUndoPart(undoId: string, ref: string): Promise<string[] | null> {
+  try {
+    return await prisma.$transaction(async (db) => {
+      // Lock the record so a concurrent undo (whole or partial) can't rewrite it under us.
+      await db.$executeRaw`SELECT id FROM "CapturePending" WHERE id = ${undoId} FOR UPDATE`;
+      const rec = await db.capturePending.findUnique({ where: { id: undoId } });
+      if (!rec || rec.kind !== "undo" || rec.chatId !== OWNER || rec.expiresAt < new Date()) return [];
+      const taken = takeUndoPart(rec.payload as UndoPayload, ref);
+      if (!taken) return [];
+      if (isEmptyUndo(taken.rest)) {
+        await db.capturePending.delete({ where: { id: undoId } });
+      } else {
+        await db.capturePending.update({
+          where: { id: undoId },
+          data: { payload: taken.rest as unknown as Prisma.InputJsonValue },
+        });
+      }
+      const { part } = taken;
+      if (part.kind === "settled") {
+        await restoreRef(db, part.ref, part.prev);
+        return [settledLabel(part)];
+      }
+      const tx = await db.financialTx.findUnique({ where: { id: part.txId } });
+      if (!tx) return [];
+      await db.financialTx.delete({ where: { id: part.txId } });
+      await dropQuestionsFor(db, part.txId);
+      return [`${tx.description} ${fmtBRL(tx.amount)}`];
+    }, TX_OPTS);
+  } catch (err) {
+    console.error("[finance/revertUndoPart]", err);
+    return null;
+  }
+}
+
+// ref null = o registro mais recente inteiro; ref = só aquele lançamento/baixa.
+async function undoMatching(ref: string | null): Promise<string[] | null> {
+  let records;
+  try {
+    records = await prisma.capturePending.findMany({
+      where: { chatId: OWNER, kind: "undo", expiresAt: { gt: new Date() } },
+      orderBy: { createdAt: "desc" },
+    });
+  } catch (err) {
+    console.error("[finance/undoMatching]", err);
+    return null;
+  }
+  if (!ref) return records[0] ? revertUndo(records[0].id) : [];
+  const target = records.find((r) => undoHasRef(r.payload as UndoPayload, ref));
+  return target ? revertUndoPart(target.id, ref) : [];
 }
 
 export async function applyActions(
@@ -195,7 +243,8 @@ export async function applyActions(
   for (const a of actions) {
     if (a.action !== "undo") continue;
     const undone = await undoMatching(a.ref);
-    if (undone.length) result.undone.push(...undone);
+    if (undone === null) result.clarify.push(UNDO_FAILED_MSG);
+    else if (undone.length) result.undone.push(...undone);
     else result.clarify.push("Não achei nada recente pra desfazer (a janela é de 24h).");
   }
 
@@ -285,6 +334,7 @@ export async function confirmPending(pendingId: string, mode: "all" | "review"):
   const user = p.snapshot ? await getDefaultUser() : null;
 
   const result = emptyResult();
+  let alreadySaved = 0;
   const claimed = await prisma.$transaction(async (db) => {
     // Claim first (inside the transaction): a double-tap finds count 0 and writes nothing.
     const { count } = await db.capturePending.deleteMany({
@@ -293,7 +343,21 @@ export async function confirmPending(pendingId: string, mode: "all" | "review"):
     if (count !== 1) return false;
     const undo: UndoPayload = { created: [], settled: [] };
 
-    for (const d of p.drafts) {
+    // Same statement staged twice: serialize confirmations, then skip rows already saved.
+    // ($executeRaw: pg_advisory_xact_lock returns void, which $queryRaw can't deserialize.)
+    await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('finance-confirm'))`;
+    const ids = p.drafts.map((d) => d.externalId).filter((x): x is string => !!x);
+    const known = new Set(
+      ids.length
+        ? (await db.financialTx.findMany({ where: { externalId: { in: ids } }, select: { externalId: true } }))
+            .map((t) => t.externalId)
+            .filter((x): x is string => !!x)
+        : [],
+    );
+    const { fresh, skipped } = splitKnownDrafts(p.drafts, known);
+    alreadySaved = skipped;
+
+    for (const d of fresh) {
       const draft = { ...d, needsReview: d.needsReview || mode === "review" };
       const id = await createTx(db, draft, p.source, p.rawInput);
       undo.created.push(id);
@@ -308,7 +372,8 @@ export async function confirmPending(pendingId: string, mode: "all" | "review"):
       undo.settled.push({ ref: s.ref, prev: settled.prev });
       result.settled.push({ ref: s.ref, description: settled.description });
     }
-    if (p.snapshot && user) {
+    // Snapshot with an invalid date is dropped, never fatal (the rows still get saved).
+    if (p.snapshot && user && isValidIsoDate(p.snapshot.asOf) && Number.isFinite(p.snapshot.balance)) {
       await db.bankBalanceSnapshot.create({
         data: { userId: user.id, account: p.snapshot.account, balance: p.snapshot.balance, asOf: toDbDate(p.snapshot.asOf), source: "extrato" },
       });
@@ -321,6 +386,11 @@ export async function confirmPending(pendingId: string, mode: "all" | "review"):
   result.summary = result.saved.length > 15
     ? `✅ Gravei ${result.saved.length} lançamentos e ${result.settled.length} baixas${mode === "review" ? " (todos marcados pra revisar no painel)" : ""}.`
     : summarizeCapture(result);
+  if (alreadySaved > 0) {
+    const line = `${alreadySaved} já tinham sido lançados.`;
+    const anythingElse = result.saved.length || result.settled.length || result.clarify.length;
+    result.summary = anythingElse ? `${result.summary}\n${line}` : line;
+  }
   return result;
 }
 

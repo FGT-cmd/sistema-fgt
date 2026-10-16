@@ -11,7 +11,7 @@ export const INTERPRET_SYSTEM = `Você registra o financeiro da consultoria do F
 
 Para cada mensagem devolva uma lista de ações:
 - create: lançamento novo. receita = dinheiro que entrou ou vai entrar; despesa = dinheiro que saiu ou vai sair.
-- settle: a mensagem diz que uma conta JÁ LANÇADA foi paga ou recebida ("boleto contadora foi pago", "a Aleska pagou a parcela", "caiu o pix da Sandi"). Use o ref do item em aberto correspondente. Nunca crie lançamento novo quando um item em aberto bate com a mensagem. Se ele citar um valor diferente, mande em amount.
+- settle: a mensagem diz que algo foi pago ou recebido e isso corresponde a um ITEM EM ABERTO da lista (conta a pagar ou parcela a receber). Use o ref desse item e mande em amount o valor que ele disse (ou null se não disse).
 - undo: ele quer desfazer ou apagar algo que acabou de lançar. ref = o ref do lançamento recente que bate, ou null para o último.
 - recategorize: ele está respondendo a categoria de um lançamento recente marcado "a revisar" ("é ferramenta", "era marketing"). ref = o ref do recente, category = a categoria certa.
 - clarify: falta o valor, ou a mensagem não é sobre dinheiro. question = pergunta curta e direta.
@@ -25,8 +25,11 @@ Regras:
 - amount: número positivo em reais. "39" = 39; "1.800" ou "1800" ou "1,8 mil" = 1800; "39,90" = 39.9.
 - description: curta e reconhecível ("mfit", "CREF", "Aleska — anual").
 - clientName: em receita de aluno, o nome como está na lista de alunos; senão null.
+- Precedência entre settle e create, nesta ordem:
+  1. Antes de criar qualquer coisa, compare com os ITENS EM ABERTO. Se um item em aberto do mesmo tipo (pagamento ↔ a pagar; recebimento ↔ a receber) bate pela descrição, pela categoria ou pelo aluno, é settle desse item, MESMO que a mensagem traga valor, forma de pagamento ou um valor um pouco diferente. Nunca crie lançamento novo para algo que já está em aberto.
+  2. Só quando nenhum item em aberto bate, mensagem com valor e descrição de gasto ou recebimento é create, MESMO que exista um LANÇAMENTO RECENTE parecido: ele pode gastar a mesma coisa de novo. Essa regra vale para lançamentos recentes, nunca para itens em aberto.
+- Use o valor exatamente como ele disse. Valor por extenso (transcrição de voz) vira o número dito, sem centavos que ele não falou ("cento e vinte e cinco reais" = 125). Nunca copie nem arredonde para o valor de um lançamento recente, mesmo com a mesma descrição. Os lançamentos recentes só servem para undo e recategorize, quando a mensagem pede isso de forma explícita (apagar, desfazer, corrigir a categoria).
 - Nunca invente valor. Sem valor e sem item em aberto que bata → clarify.
-- Mensagem com valor e descrição de gasto ou recebimento ("paguei 39 mfit", "chatgpt 57 cartão natália") é create, MESMO que já exista um lançamento recente parecido: ele pode gastar a mesma coisa de novo. Use o valor exatamente como ele disse (por extenso também: "trinta e nove reais" = 39), nunca copie o valor de um lançamento recente. Os lançamentos recentes só servem para undo e recategorize, quando a mensagem pede isso de forma explícita (apaga, desfaz, "é conhecimento", "era marketing").
 - Campos que não se aplicam à ação: null (alternatives: []).`;
 
 const ACTION_SCHEMA: JsonSchema = {
@@ -99,7 +102,7 @@ export const PDF_SYSTEM = `Extraia todas as movimentações deste extrato bancá
 - date: YYYY-MM-DD.
 - amount: negativo para saídas e compras, positivo para entradas e créditos.
 - description: o texto da linha, sem alterar.
-- closingBalance: saldo final da conta e a data dele, se o documento mostrar; senão null.
+- closingBalance: saldo final da conta (amount) e a data desse saldo (date, YYYY-MM-DD), se o documento mostrar; senão null.
 - isCard: true se for fatura de cartão de crédito.
 Não pule linhas. Não some nem agrupe.`;
 

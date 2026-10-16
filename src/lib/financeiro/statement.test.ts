@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   parseStatementDate, parseStatementAmount, parseOfx, parseCsv, detectAccount, toStatementRows,
-  decodeStatementText,
+  decodeStatementText, sanitizeClosingBalance,
 } from "./statement";
 
 const OFX = `OFXHEADER:100
@@ -95,5 +95,14 @@ describe("conta e ids", () => {
   it("decodifica latin1 quando o arquivo não é utf-8", () => {
     const b64 = Buffer.from("Descrição", "latin1").toString("base64");
     expect(decodeStatementText(b64)).toBe("Descrição");
+  });
+
+  it("saldo final do PDF só vale com data ISO real e valor finito", () => {
+    expect(sanitizeClosingBalance({ amount: 1234.5, date: "2026-09-30" })).toEqual({ amount: 1234.5, date: "2026-09-30" });
+    expect(sanitizeClosingBalance({ amount: 1234.5, date: "30/09/2026" })).toBeNull();
+    expect(sanitizeClosingBalance({ amount: 1234.5, date: "2026-09-31" })).toBeNull();
+    expect(sanitizeClosingBalance({ amount: Number.NaN, date: "2026-09-30" })).toBeNull();
+    expect(sanitizeClosingBalance({ amount: "10", date: "2026-09-30" })).toBeNull();
+    expect(sanitizeClosingBalance(null)).toBeNull();
   });
 });

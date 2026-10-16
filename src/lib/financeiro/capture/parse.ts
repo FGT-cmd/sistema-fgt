@@ -87,7 +87,10 @@ export function validateActions(raw: RawAction[], ctx: CaptureContext): CaptureA
         break;
       }
       case "undo":
-        out.push({ action: "undo", ref: a.ref && ctx.recent.some((r) => r.ref === a.ref) ? a.ref : null });
+        // null = "desfaz o último". Ref desconhecido nunca vira "o último": pergunta.
+        if (!a.ref) out.push({ action: "undo", ref: null });
+        else if (ctx.recent.some((r) => r.ref === a.ref)) out.push({ action: "undo", ref: a.ref });
+        else out.push({ action: "clarify", question: "Qual lançamento você quer desfazer?" });
         break;
       case "recategorize": {
         const category = matchLabel(allCategories, a.category);

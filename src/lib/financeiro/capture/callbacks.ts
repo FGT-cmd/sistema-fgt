@@ -1,6 +1,6 @@
 import type { TelegramButton } from "@/lib/telegram";
 import {
-  answerQuestion, confirmPending, discardPending, revertUndo, startCorrection,
+  answerQuestion, confirmPending, discardPending, revertUndo, startCorrection, UNDO_FAILED_MSG,
 } from "./apply";
 import { buildCaptureButtons, type FinanceCallback } from "./telegramUi";
 
@@ -10,6 +10,7 @@ export async function handleFinanceCallback(cb: FinanceCallback): Promise<{ text
   }
   if (cb.type === "undo") {
     const undone = await revertUndo(cb.undoId);
+    if (undone === null) return { text: UNDO_FAILED_MSG, buttons: [] };
     return {
       text: undone.length ? `↩️ Desfeito:\n${undone.map((u) => `• ${u}`).join("\n")}` : "Nada pra desfazer (a janela é de 24h).",
       buttons: [],

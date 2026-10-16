@@ -3,6 +3,7 @@
 
 import type { StatementRow } from "./dedupe";
 import { normalizeLabel } from "./vocab";
+import { isValidIsoDate } from "./dates";
 
 export type RawStatementRow = { date: string; amount: number; description: string; fitId?: string };
 
@@ -12,6 +13,15 @@ export type ParsedStatement = {
   isCard: boolean;
   invertSign: boolean; // fatura que lista compras como positivas
 };
+
+// Saldo final lido por modelo (PDF): só vale com data YYYY-MM-DD real e valor finito.
+export function sanitizeClosingBalance(cb: unknown): ParsedStatement["ledgerBalance"] {
+  if (!cb || typeof cb !== "object") return null;
+  const { amount, date } = cb as { amount?: unknown; date?: unknown };
+  if (typeof date !== "string" || !isValidIsoDate(date)) return null;
+  if (typeof amount !== "number" || !Number.isFinite(amount)) return null;
+  return { amount, date };
+}
 
 export function parseStatementDate(raw: string): string | null {
   const s = raw.trim();

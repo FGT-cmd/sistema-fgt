@@ -3,7 +3,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import type { StatementRow } from "../dedupe";
-import type { ParsedStatement } from "../statement";
+import { sanitizeClosingBalance, type ParsedStatement } from "../statement";
 import { methodsForAccount } from "../vocab";
 import { fmtBRL, isValidIsoDate } from "../dates";
 import {
@@ -161,7 +161,7 @@ export async function extractPdfStatement(base64: string): Promise<ParsedStateme
   });
   return {
     rows: (out.rows ?? []).filter((r) => isValidIsoDate(r.date) && Number.isFinite(r.amount) && r.amount !== 0),
-    ledgerBalance: out.closingBalance,
+    ledgerBalance: sanitizeClosingBalance(out.closingBalance),
     isCard: !!out.isCard,
     invertSign: false,
   };

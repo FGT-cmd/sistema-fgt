@@ -44,3 +44,6 @@ next-env.d.ts
 
 # SDD scratch workspace
 .superpowers/
+
+# comprovantes e extratos reais usados só na avaliação local
+src/lib/financeiro/__fixtures__/

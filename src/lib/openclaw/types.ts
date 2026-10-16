@@ -1,5 +1,7 @@
 // Tipos centrais do OpenClaw Assistant
 
+import type { TelegramButton } from "@/lib/telegram";
+
 export type OCIntent =
   | "query_pending"
   | "query_crm"
@@ -10,6 +12,8 @@ export type OCIntent =
   | "create_task"
   | "add_student_note"
   | "save_content_idea"
+  | "finance_capture"
+  | "finance_ask"
   | "unknown";
 
 export type OCQueryType = "who_didnt_pay" | "overdue" | "today" | "attention" | "general";
@@ -126,6 +130,7 @@ export type OCProcessResult = {
   status: "executed" | "waiting_confirmation" | "failed" | "cancelled";
   eventId?: string;
   waitingConfirmation?: boolean;
+  buttons?: TelegramButton[][];
 };
 
 // ─── Sessão pendente armazenada no banco ─────────────────────────

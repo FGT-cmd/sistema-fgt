@@ -12,6 +12,10 @@
 import { prisma } from "@/lib/prisma";
 import { getDefaultUser } from "@/lib/user";
 import { classifyOCMessage } from "./classifier";
+import { captureText } from "@/lib/financeiro/capture/run";
+import { buildCaptureButtons } from "@/lib/financeiro/capture/telegramUi";
+import { answerFinanceQuestion } from "@/lib/financeiro/ask/answer";
+import type { TelegramButton } from "@/lib/telegram";
 
 // ─── Upsert helper ────────────────────────────────────────────────
 // If existingId is provided, updates that event; otherwise creates a new one.
@@ -221,7 +225,7 @@ const DOCUMENTAL_RESPONSE =
   "Posso operar o sistema:\n" +
   "• Consultar pendências e pagamentos\n" +
   "• Criar aluna ou lead\n" +
-  "• Registrar pagamento\n" +
+  "• Lançar entradas e saídas, e responder sobre o financeiro\n" +
   "• Criar tarefa ou observação\n" +
   "• Salvar ideia de conteúdo";
 
@@ -325,6 +329,37 @@ export async function processOpenClawMessage(params: {
   }
 
   const { intent, data } = classification;
+
+  // ── 3b. FINANCEIRO (captura e perguntas, sem confirmação) ─────────
+  if (intent === "finance_capture" || intent === "finance_ask") {
+    let response: string;
+    let buttons: TelegramButton[][] | undefined;
+    let finStatus: "executed" | "failed" = "executed";
+    let finError: string | undefined;
+    try {
+      if (intent === "finance_capture") {
+        const r = await captureText(message, source === "jarvis" ? "jarvis" : "telegram");
+        response = r.summary;
+        buttons = buildCaptureButtons(r);
+      } else {
+        response = await answerFinanceQuestion(message);
+      }
+    } catch (err) {
+      finStatus = "failed";
+      finError = String(err);
+      response = "Falha no financeiro agora. Tenta de novo em instantes.";
+    }
+    let evIdFin: string | undefined;
+    try {
+      evIdFin = await persistEvent(existingEventId, {
+        chatId, source, rawCommand: message, interpretedIntent: intent,
+        executionStatus: finStatus, errorMessage: finError, response, userId: user.id,
+      });
+    } catch (saveErr) {
+      console.error("[OpenClaw] finance event save failed:", saveErr);
+    }
+    return { response, intent, status: finStatus, eventId: evIdFin, buttons };
+  }
 
   // ── 4. QUERY DIRETA (sem confirmação) ─────────────────────────────
   if (intent === "query_pending") {

@@ -55,9 +55,7 @@ create_lead → { "name": string, "title"?: string, "source"?: string, "value"?:
   - value: valor estimado se mencionado
   - nextAction: próxima ação se mencionada
 
-register_payment → { "studentName": string, "amount": number, "paymentMethod": "Pix"|"Dinheiro"|"Cartão"|"Transferência"|"Débito"|"Crédito", "date"?: "YYYY-MM-DD" }
-  - "X pagou Y no pix", "X quitou", "X efetuou pagamento"
-  - date: hoje=${today}, amanhã, etc.
+register_payment → (não use mais: pagamento de aluno agora é finance_capture)
 
 create_task → { "title": string, "dueDate"?: "YYYY-MM-DD", "studentName"?: string, "type"?: "general"|"student"|"financial"|"content"|"commercial"|"administrative" }
   - "lembrar", "criar tarefa", "me avisa", "anotar tarefa", "tarefa para"
@@ -70,6 +68,13 @@ add_student_note → { "studentName": string, "note": string }
 save_content_idea → { "idea": string }
   - "ideia de conteúdo", "salvar ideia", "ideia para post/reels/stories/vídeo"
   - idea: o texto da ideia, sem o prefixo
+
+finance_capture → {}
+  - qualquer mensagem que registra dinheiro entrando ou saindo, conta a pagar ou a receber, baixa de conta, pagamento de aluno, correção de categoria ou "desfaz" de lançamento financeiro. Exemplos de intenção (não frases obrigatórias): "paguei 39 mfit pix", "boleto contadora foi pago", "recebi 1800 da Aleska anual no C6", "Camila pagou 300 no pix", "vence dia 31 o CREF 444", "é ferramenta", "desfaz o último".
+
+finance_ask → {}
+  - perguntas sobre dinheiro da empresa: contas em aberto, o que pagar hoje ou na semana, saldo, quanto entrou, saiu ou sobrou, resultado do mês, meta de faturamento, reservas, gastos por categoria, o que está pra revisar.
+  - "quem não pagou", "inadimplentes" e cobrança de alunos continuam sendo query_pending.
 
 unknown → {}
 

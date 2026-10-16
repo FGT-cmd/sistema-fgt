@@ -21,22 +21,25 @@ model User {
   googleRefreshToken String?
   googleTokenExpiry  DateTime?
 
-  accounts         Account[]
-  sessions         Session[]
-  clients          Client[]
-  deals            Deal[]
-  tasks            Task[]
-  todoTasks        TodoTask[]
-  interactions     Interaction[]
-  calendarEvents   CalendarEvent[]
-  followUpSeqs     FollowUpSeq[]
-  monthlyGoals     MonthlyGoal[]
-  servicePlans     ServicePlan[]
-  whatsAppEvents   WhatsAppEvent[]
+  accounts             Account[]
+  sessions             Session[]
+  clients              Client[]
+  deals                Deal[]
+  tasks                Task[]
+  todoTasks            TodoTask[]
+  interactions         Interaction[]
+  calendarEvents       CalendarEvent[]
+  followUpSeqs         FollowUpSeq[]
+  monthlyGoals         MonthlyGoal[]
+  servicePlans         ServicePlan[]
+  whatsAppEvents       WhatsAppEvent[]
   openClawEvents       OpenClawEvent[]
   contentIdeas         ContentIdea[]
   financialConfigs     FinancialConfig[]
   financialMonthCloses FinancialMonthClose[]
+  financialBudgets     FinancialBudget[]
+  recurringCosts       RecurringCost[]
+  bankBalanceSnapshots BankBalanceSnapshot[]
 }
 
 model Account {
@@ -76,50 +79,50 @@ model VerificationToken {
 
 // CRM
 model Client {
-  id        String   @id @default(cuid())
-  name      String
-  email     String?
-  phone     String?
-  cpf       String?
-  photo     String?
-  tags              String[]
-  notes             String?
-  status            String   @default("lead")
-  source            String?
-  instagram         String?
-  planName          String?
-  planDetails       String?
-  paymentMethod     String?
-  negotiationNotes  String?
-  contractUrl       String?
-  createdAt         DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  userId    String
+  id               String   @id @default(cuid())
+  name             String
+  email            String?
+  phone            String?
+  cpf              String?
+  photo            String?
+  tags             String[]
+  notes            String?
+  status           String   @default("lead")
+  source           String?
+  instagram        String?
+  planName         String?
+  planDetails      String?
+  paymentMethod    String?
+  negotiationNotes String?
+  contractUrl      String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  userId           String
 
-  user             User              @relation(fields: [userId], references: [id])
-  checkoutSession  CheckoutSession?
-  deals            Deal[]
-  interactions   Interaction[]
-  projects       Project[]
-  invoices       Invoice[]
-  contracts      Contract[]
-  anamnese       Anamnese?
-  workoutPlans   WorkoutPlan[]
-  bodyRecords    BodyRecord[]
-  checkIns       CheckIn[]
-  calendarEvents CalendarEvent[]
-  financialTxs   FinancialTx[]
-  followUpLogs   FollowUpLog[]
-  sales          Sale[]
-  files          StudentFile[]
-  todoTasks      TodoTask[]
-  invoiceIssues  InvoiceIssue[]
-  studentJourney StudentJourney?
+  user            User             @relation(fields: [userId], references: [id])
+  checkoutSession CheckoutSession?
+  deals           Deal[]
+  interactions    Interaction[]
+  projects        Project[]
+  invoices        Invoice[]
+  contracts       Contract[]
+  anamnese        Anamnese?
+  workoutPlans    WorkoutPlan[]
+  bodyRecords     BodyRecord[]
+  checkIns        CheckIn[]
+  calendarEvents  CalendarEvent[]
+  financialTxs    FinancialTx[]
+  followUpLogs    FollowUpLog[]
+  sales           Sale[]
+  files           StudentFile[]
+  todoTasks       TodoTask[]
+  invoiceIssues   InvoiceIssue[]
+  studentJourney  StudentJourney?
 }
 
 model Deal {
-  id            String    @id @default(cuid())
-  title         String
+  id             String    @id @default(cuid())
+  title          String
   value          Float?
   potentialValue Float?
   closedValue    Float?
@@ -133,11 +136,11 @@ model Deal {
   source         String?
   funnel         String?
   objectives     String?
-  firstContact  DateTime  @default(now())
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  clientId      String
-  userId        String
+  firstContact   DateTime  @default(now())
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  clientId       String
+  userId         String
 
   client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
   user   User   @relation(fields: [userId], references: [id])
@@ -157,66 +160,74 @@ model Interaction {
 
 // Financeiro
 model FinancialTx {
-  id            String    @id @default(cuid())
-  type          String
-  description   String
-  amount        Float
-  category      String
-  status        String    @default("pendente")
-  dueDate       DateTime?
-  paidAt        DateTime?
-  paymentMethod String?
-  notes         String?
-  recurring     Boolean   @default(false)
-  recurringDay  Int?
-  clientId      String?
-  installmentId String?   @unique
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id              String    @id @default(cuid())
+  type            String
+  description     String
+  amount          Float
+  category        String
+  status          String    @default("pendente")
+  dueDate         DateTime?
+  paidAt          DateTime?
+  paymentMethod   String?
+  notes           String?
+  recurring       Boolean   @default(false)
+  recurringDay    Int?
+  clientId        String?
+  installmentId   String?   @unique
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  source          String? // manual | telegram | jarvis | foto | extrato | recorrente | planilha | infinitepay
+  needsReview     Boolean   @default(false)
+  rawInput        String? // mensagem original ou linha do extrato, para auditoria
+  externalId      String? // FITID ou hash de dedupe do extrato
+  recurringCostId String?
 
-  client        Client?       @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  installment   Installment?  @relation(fields: [installmentId], references: [id], onDelete: Cascade)
+  client        Client?        @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  installment   Installment?   @relation(fields: [installmentId], references: [id], onDelete: Cascade)
   invoiceIssues InvoiceIssue[]
+
+  @@index([externalId])
+  @@index([recurringCostId])
 }
 
 // Controle interno de emissão fiscal (orquestração futura via Notasy)
 model InvoiceIssue {
-  id                    String    @id @default(cuid())
-  clientId              String
-  saleId                String?
-  checkoutSessionId     String?
-  financialTxId         String?
-  documentType          String    @default("nfse")
-  status                String    @default("ready")
-  serviceDescription    String
-  amount                Float
-  taxpayerName          String
-  taxpayerCpfCnpj       String?
-  taxpayerEmail         String?
-  taxpayerPhone         String?
-  addressStreet         String?
-  addressNumber         String?
-  addressNeighborhood   String?
-  addressCity           String?
-  addressState          String?
-  addressZipCode        String?
-  externalProvider      String?
-  externalId            String?
-  invoiceNumber         String?
-  pdfUrl                String?
-  xmlUrl                String?
-  rawPayload            Json?
-  rawResponse           Json?
-  errorMessage          String?
-  sentAt                DateTime?
-  issuedAt              DateTime?
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
+  id                  String    @id @default(cuid())
+  clientId            String
+  saleId              String?
+  checkoutSessionId   String?
+  financialTxId       String?
+  documentType        String    @default("nfse")
+  status              String    @default("ready")
+  serviceDescription  String
+  amount              Float
+  taxpayerName        String
+  taxpayerCpfCnpj     String?
+  taxpayerEmail       String?
+  taxpayerPhone       String?
+  addressStreet       String?
+  addressNumber       String?
+  addressNeighborhood String?
+  addressCity         String?
+  addressState        String?
+  addressZipCode      String?
+  externalProvider    String?
+  externalId          String?
+  invoiceNumber       String?
+  pdfUrl              String?
+  xmlUrl              String?
+  rawPayload          Json?
+  rawResponse         Json?
+  errorMessage        String?
+  sentAt              DateTime?
+  issuedAt            DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
-  client            Client           @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  sale              Sale?            @relation(fields: [saleId], references: [id], onDelete: SetNull)
-  checkoutSession   CheckoutSession? @relation(fields: [checkoutSessionId], references: [id], onDelete: SetNull)
-  financialTx       FinancialTx?     @relation(fields: [financialTxId], references: [id], onDelete: SetNull)
+  client          Client           @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  sale            Sale?            @relation(fields: [saleId], references: [id], onDelete: SetNull)
+  checkoutSession CheckoutSession? @relation(fields: [checkoutSessionId], references: [id], onDelete: SetNull)
+  financialTx     FinancialTx?     @relation(fields: [financialTxId], references: [id], onDelete: SetNull)
 }
 
 model Invoice {
@@ -257,16 +268,16 @@ model Sale {
   status            String    @default("ativo")
   clientId          String
   // Negociação estruturada
-  negotiationType   String?   // "cash" | "pix" | "card" | "custom"
-  servicePlanId     String?   // plano vinculado (opcional)
-  grossValue        Float?    // valor bruto da venda (faturamento) — usado no cartão
-  netValue          Float?    // valor líquido recebido (caixa) — usado no cartão com antecipação
+  negotiationType   String? // "cash" | "pix" | "card" | "custom"
+  servicePlanId     String? // plano vinculado (opcional)
+  grossValue        Float? // valor bruto da venda (faturamento) — usado no cartão
+  netValue          Float? // valor líquido recebido (caixa) — usado no cartão com antecipação
   cashFlowDate      DateTime? // data real de entrada no caixa (cartão antecipado)
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
-  client          Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  servicePlan     ServicePlan?    @relation(fields: [servicePlanId], references: [id], onDelete: SetNull)
+  client          Client           @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  servicePlan     ServicePlan?     @relation(fields: [servicePlanId], references: [id], onDelete: SetNull)
   installments    Installment[]
   checkoutSession CheckoutSession?
   invoiceIssues   InvoiceIssue[]
@@ -277,14 +288,14 @@ model Installment {
   id            String    @id @default(cuid())
   number        Int
   amount        Float
-  netValue      Float?    // valor líquido após taxas (cartão)
+  netValue      Float? // valor líquido após taxas (cartão)
   dueDate       DateTime
   cashDate      DateTime? // data de entrada real no caixa (default derivado da forma de pagamento)
   paidAt        DateTime?
   status        String    @default("pendente")
-  label         String?   // rótulo livre: "Entrada", "1ª parcela", etc.
+  label         String? // rótulo livre: "Entrada", "1ª parcela", etc.
   notes         String?
-  paymentMethod String?   // forma de pagamento desta etapa (Pix, Cartão, etc.)
+  paymentMethod String? // forma de pagamento desta etapa (Pix, Cartão, etc.)
   saleId        String
 
   sale        Sale         @relation(fields: [saleId], references: [id], onDelete: Cascade)
@@ -355,24 +366,24 @@ model WorkoutPlan {
 }
 
 model WorkoutDay {
-  id          String @id @default(cuid())
-  name        String
-  dayOfWeek   String?
-  position    Int    @default(0)
-  planId      String
+  id        String  @id @default(cuid())
+  name      String
+  dayOfWeek String?
+  position  Int     @default(0)
+  planId    String
 
   plan         WorkoutPlan   @relation(fields: [planId], references: [id], onDelete: Cascade)
   workoutItems WorkoutItem[]
 }
 
 model WorkoutItem {
-  id         String @id @default(cuid())
+  id         String  @id @default(cuid())
   sets       Int?
   reps       String?
   load       String?
   rest       String?
   notes      String?
-  position   Int    @default(0)
+  position   Int     @default(0)
   dayId      String
   exerciseId String
 
@@ -381,18 +392,18 @@ model WorkoutItem {
 }
 
 model BodyRecord {
-  id      String   @id @default(cuid())
-  date    DateTime @default(now())
-  weight  Float?
-  bodyFat Float?
-  waist   Float?
-  hip     Float?
-  chest   Float?
-  arm     Float?
-  thigh   Float?
-  calf    Float?
-  photos  String[]
-  notes   String?
+  id       String   @id @default(cuid())
+  date     DateTime @default(now())
+  weight   Float?
+  bodyFat  Float?
+  waist    Float?
+  hip      Float?
+  chest    Float?
+  arm      Float?
+  thigh    Float?
+  calf     Float?
+  photos   String[]
+  notes    String?
   clientId String
 
   client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
@@ -486,22 +497,22 @@ model ServicePlan {
 
 // Metas Mensais
 model MonthlyGoal {
-  id              String     @id @default(cuid())
-  month           Int
-  year            Int
-  revenueGoal           Float      @default(0)
-  newClientsGoal        Int        @default(0)
-  leadsGoal             Int        @default(0)
-  conversionGoal        Float      @default(0)
-  averageTicketGoal     Float      @default(0)
-  closingRateGoal       Float      @default(0)
-  qualificationRateGoal Float      @default(0)
-  weeksPerMonth         Int        @default(4)
-  businessDaysPerWeek   Int        @default(5)
+  id                    String   @id @default(cuid())
+  month                 Int
+  year                  Int
+  revenueGoal           Float    @default(0)
+  newClientsGoal        Int      @default(0)
+  leadsGoal             Int      @default(0)
+  conversionGoal        Float    @default(0)
+  averageTicketGoal     Float    @default(0)
+  closingRateGoal       Float    @default(0)
+  qualificationRateGoal Float    @default(0)
+  weeksPerMonth         Int      @default(4)
+  businessDaysPerWeek   Int      @default(5)
   notes                 String?
-  userId          String
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
+  userId                String
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 
   user  User       @relation(fields: [userId], references: [id])
   items GoalItem[]
@@ -510,11 +521,11 @@ model MonthlyGoal {
 }
 
 model GoalItem {
-  id        String      @id @default(cuid())
+  id        String @id @default(cuid())
   label     String
-  quantity  Int         @default(1)
-  unitPrice Float       @default(0)
-  position  Int         @default(0)
+  quantity  Int    @default(1)
+  unitPrice Float  @default(0)
+  position  Int    @default(0)
   goalId    String
 
   goal MonthlyGoal @relation(fields: [goalId], references: [id], onDelete: Cascade)
@@ -535,12 +546,12 @@ model FollowUpSeq {
 }
 
 model FollowUpStep {
-  id        String @id @default(cuid())
+  id        String  @id @default(cuid())
   channel   String
   delayDays Int
   subject   String?
   template  String
-  position  Int    @default(0)
+  position  Int     @default(0)
   seqId     String
 
   seq FollowUpSeq @relation(fields: [seqId], references: [id], onDelete: Cascade)
@@ -622,7 +633,7 @@ model WhatsAppEvent {
 model OpenClawEvent {
   id                  String   @id @default(cuid())
   chatId              String   @default("test")
-  source              String   @default("telegram")  // telegram | test | api
+  source              String   @default("telegram") // telegram | test | api
   rawCommand          String
   interpretedIntent   String?
   extractedData       Json?
@@ -642,7 +653,7 @@ model OpenClawEvent {
 model ContentIdea {
   id              String   @id @default(cuid())
   rawIdea         String
-  suggestedFormat String?  // reels | stories | carrossel | podcast
+  suggestedFormat String? // reels | stories | carrossel | podcast
   hook            String?
   status          String   @default("idea")
   tags            String[]
@@ -656,35 +667,35 @@ model ContentIdea {
 // Checkout próprio (link público; pagamento InfinitePay)
 // status: pending_customer_data | customer_data_completed | paid
 model CheckoutSession {
-  id            String   @id @default(cuid())
-  token         String   @unique
-  productName   String
-  amountCents   Int
-  status        String   @default("pending_customer_data")
-  customerName  String?
-  customerCpf   String?
-  customerEmail String?
-  customerPhone String?
-  notes         String?
-  source        String   @default("telegram")
-  infinitepayOrderNsu        String?
-  infinitepayCheckoutUrl     String?
-  infinitepaySlug            String?
-  infinitepayRawResponse     Json?
-  infinitepayTransactionNsu  String?
-  infinitepayReceiptUrl      String?
-  infinitepayCaptureMethod   String?
-  paidAmountCents            Int?
-  paidAt                     DateTime?
-  webhookPayload             Json?
-  clientId                   String?  @unique
-  client                     Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  saleId                     String?  @unique
-  sale                       Sale?    @relation(fields: [saleId], references: [id], onDelete: SetNull)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  invoiceIssues   InvoiceIssue[]
-  studentJourneys StudentJourney[]
+  id                        String           @id @default(cuid())
+  token                     String           @unique
+  productName               String
+  amountCents               Int
+  status                    String           @default("pending_customer_data")
+  customerName              String?
+  customerCpf               String?
+  customerEmail             String?
+  customerPhone             String?
+  notes                     String?
+  source                    String           @default("telegram")
+  infinitepayOrderNsu       String?
+  infinitepayCheckoutUrl    String?
+  infinitepaySlug           String?
+  infinitepayRawResponse    Json?
+  infinitepayTransactionNsu String?
+  infinitepayReceiptUrl     String?
+  infinitepayCaptureMethod  String?
+  paidAmountCents           Int?
+  paidAt                    DateTime?
+  webhookPayload            Json?
+  clientId                  String?          @unique
+  client                    Client?          @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  saleId                    String?          @unique
+  sale                      Sale?            @relation(fields: [saleId], references: [id], onDelete: SetNull)
+  createdAt                 DateTime         @default(now())
+  updatedAt                 DateTime         @updatedAt
+  invoiceIssues             InvoiceIssue[]
+  studentJourneys           StudentJourney[]
 }
 
 // Jornada do Aluno — CRM de Alunos (Fase 1)
@@ -719,11 +730,13 @@ model StudentJourney {
 model FinancialConfig {
   id        String   @id @default(cuid())
   userId    String
-  type      String   // income_cat | expense_cat | recv_method | pay_method | goal
+  type      String // income_cat | expense_cat | recv_method | pay_method | goal
   value     String
-  key       String?  // para goals: cap_giro, reserva_fin, reserva_oport, rec_mensal, dist_lucros
+  key       String? // para goals: cap_giro, reserva_fin, reserva_oport, rec_mensal, dist_lucros
   order     Int      @default(0)
   active    Boolean  @default(true)
+  group     String? // categorias de saída: fixo | variavel | despesa | investimento | destinacao
+  account   String? // formas de pagamento/recebimento: C6 | Nubank PF | Cartão Natália | InfinitePay | Dinheiro
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -736,7 +749,7 @@ model FinancialConfig {
 model FinancialMonthClose {
   id            String   @id @default(cuid())
   userId        String
-  month         String   // YYYY-MM
+  month         String // YYYY-MM
   saldoInicial  Float    @default(0)
   saldoBanco    Float?
   notes         String?
@@ -754,4 +767,65 @@ model FinancialMonthClose {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, month])
+}
+
+// Projetado por categoria e mês (aba "Planejamento anual" da planilha)
+model FinancialBudget {
+  id        String   @id @default(cuid())
+  userId    String
+  month     String // YYYY-MM
+  category  String
+  amount    Float
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, month, category])
+}
+
+// Custos fixos que viram "a pagar" no dia 1 de cada mês
+model RecurringCost {
+  id            String   @id @default(cuid())
+  userId        String
+  category      String
+  description   String
+  amount        Float
+  dayOfMonth    Int
+  paymentMethod String?
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, active])
+}
+
+// Saldo informado por um extrato (base do saldo estimado)
+model BankBalanceSnapshot {
+  id        String   @id @default(cuid())
+  userId    String
+  account   String
+  balance   Float
+  asOf      DateTime
+  source    String // extrato | manual
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, account, asOf])
+}
+
+// Pendências da captura: confirmação de foto/extrato, pergunta de categoria,
+// janela de desfazer (24h) e correção de comprovante.
+model CapturePending {
+  id        String   @id @default(cuid())
+  kind      String // confirm | question | undo | correction
+  chatId    String // "owner" — sistema de um dono só
+  payload   Json
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([chatId, kind])
 }

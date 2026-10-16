@@ -2692,8 +2692,7 @@ describe("interpretação real — capture (gasta API)", () => {
   });
   it("chatgpt 57 cartão natália → ambíguo, a revisar", async () => {
     const a = (await first("chatgpt 57 cartão natália")) as CreateAction;
-    expect(a.action).toBe("create");
-    expect(a.alternatives.length).toBeGreaterThanOrEqual(0);
+    expect(a).toMatchObject({ action: "create", amount: 57, paymentMethod: "Cartão crédito (Natália)" });
     expect(["Ferramentas e plataformas", "Conhecimento"]).toContain(a.category);
   });
   it("apaga esse do mfit → desfaz o recente", async () => {
@@ -4861,11 +4860,7 @@ Se "document" falhar ou o PDF vier com linha pulada/inventada, aplique a mesma r
 
 - [ ] **Step 3: Deploy**
 
-Perguntar ao Fernando antes ("posso subir pro ar?"). Com o ok:
-
-```bash
-git push origin main
-```
+Perguntar ao Fernando antes ("posso subir pro ar?"). Com o ok, integrar a branch `feat/financeiro-captura` usando superpowers:finishing-a-development-branch (merge em `main` e `git push origin main`; a Vercel publica a `main`).
 
 Esperar o deploy da Vercel terminar (`vercel ls` ou o painel) e confirmar que `https://sistema-fgt.vercel.app/api/telegram` (GET) responde `ok: true`.
 

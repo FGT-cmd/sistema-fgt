@@ -12,10 +12,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDailyPendingSummary } from "@/lib/openclaw/actions";
 import { sendTelegramMessage } from "@/lib/telegram";
 import { getDefaultUser } from "@/lib/user";
+import { prisma } from "@/lib/prisma";
+import { generateRecurringForMonth } from "@/lib/financeiro/recurringRunner";
+import { buildMonthlyMessage } from "@/lib/financeiro/recurring";
+import { todaySaoPaulo } from "@/lib/financeiro/dates";
 import type { OCQueryType } from "@/lib/openclaw/types";
 
-type Slot = "morning" | "afternoon" | "evening" | "weekly";
-const VALID_SLOTS: Slot[] = ["morning", "afternoon", "evening", "weekly"];
+type Slot = "morning" | "afternoon" | "evening" | "weekly" | "monthly";
+const VALID_SLOTS: Slot[] = ["morning", "afternoon", "evening", "weekly", "monthly"];
 
 function isAuthorized(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET?.trim();
@@ -29,6 +33,7 @@ function frame(slot: Slot, body: string): string {
     afternoon: "🕑 *Check do meio do dia*",
     evening: "🌙 *Fechamento do dia*",
     weekly: "🗓️ *Revisão semanal*",
+    monthly: "🗓️ *Virada do mês*",
   };
   return `${headers[slot]}\n\n${body}`;
 }
@@ -54,6 +59,13 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   try {
     const user = await getDefaultUser();
+    if (slot === "monthly") {
+      const month = todaySaoPaulo().slice(0, 7);
+      const created = await generateRecurringForMonth(user.id, month);
+      const reviewCount = await prisma.financialTx.count({ where: { needsReview: true } });
+      await sendTelegramMessage(chatId, buildMonthlyMessage({ month, created, reviewCount }));
+      return NextResponse.json({ ok: true, slot, created: created.length });
+    }
     const queryType: OCQueryType = slot === "weekly" ? "overdue" : "today";
     const body = await getDailyPendingSummary(user.id, queryType);
     await sendTelegramMessage(chatId, frame(slot, body));

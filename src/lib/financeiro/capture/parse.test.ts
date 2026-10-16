@@ -79,6 +79,15 @@ describe("validateActions", () => {
     expect(res[3].action).toBe("clarify");
   });
 
+  it("data impossível vira hoje em create e em settle", () => {
+    const [a, b] = validateActions([
+      raw({ date: "2026-11-31" }),
+      raw({ action: "settle", ref: "tx:cont", date: "2026-13-01" }),
+    ], ctx);
+    expect(a).toMatchObject({ action: "create", date: "2026-10-16" });
+    expect(b).toMatchObject({ action: "settle", date: "2026-10-16" });
+  });
+
   it("clarify usa a pergunta do modelo", () => {
     const [a] = validateActions([raw({ action: "clarify", question: "Foi pix ou cartão?" })], ctx);
     expect(a).toEqual({ action: "clarify", question: "Foi pix ou cartão?" });

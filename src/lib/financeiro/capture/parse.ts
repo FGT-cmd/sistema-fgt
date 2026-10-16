@@ -3,12 +3,10 @@
 // existir, valores precisam ser positivos.
 
 import { matchLabel, normalizeLabel } from "../vocab";
-import { round2 } from "../dates";
+import { round2, isValidIsoDate } from "../dates";
 import type {
   CaptureAction, CaptureContext, ClarifyAction, CreateAction, RawAction,
 } from "./types";
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export function matchClient(clients: { id: string; name: string }[], name: string | null): string | null {
   if (!name || !name.trim()) return null;
@@ -23,7 +21,7 @@ export function matchClient(clients: { id: string; name: string }[], name: strin
 }
 
 function validDate(date: string | null, today: string): string {
-  return date && DATE_RE.test(date) ? date : today;
+  return date && isValidIsoDate(date) ? date : today;
 }
 
 export function validateCreate(a: RawAction, ctx: CaptureContext): CreateAction | ClarifyAction {

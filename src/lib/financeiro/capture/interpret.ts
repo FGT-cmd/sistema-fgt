@@ -5,7 +5,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { StatementRow } from "../dedupe";
 import type { ParsedStatement } from "../statement";
 import { methodsForAccount } from "../vocab";
-import { fmtBRL } from "../dates";
+import { fmtBRL, isValidIsoDate } from "../dates";
 import {
   INTERPRET_SYSTEM, INTERPRET_SCHEMA, CATEGORIZE_SYSTEM, CATEGORIZE_SCHEMA, PDF_SYSTEM, PDF_SCHEMA,
   buildContextText,
@@ -160,7 +160,7 @@ export async function extractPdfStatement(base64: string): Promise<ParsedStateme
     ],
   });
   return {
-    rows: (out.rows ?? []).filter((r) => /^\d{4}-\d{2}-\d{2}$/.test(r.date) && Number.isFinite(r.amount) && r.amount !== 0),
+    rows: (out.rows ?? []).filter((r) => isValidIsoDate(r.date) && Number.isFinite(r.amount) && r.amount !== 0),
     ledgerBalance: out.closingBalance,
     isCard: !!out.isCard,
     invertSign: false,

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  todaySaoPaulo, addDays, daysBetween, isoDate, fmtBRL, fmtDayMonth, monthLabel, round2,
+  todaySaoPaulo, addDays, daysBetween, isoDate, fmtBRL, fmtDayMonth, monthLabel, round2, isValidIsoDate,
 } from "./dates";
 
 describe("dates", () => {
@@ -22,5 +22,14 @@ describe("dates", () => {
     expect(fmtDayMonth("2026-10-05")).toBe("05/10");
     expect(monthLabel("2026-10")).toBe("outubro/2026");
     expect(round2(0.1 + 0.2)).toBe(0.3);
+  });
+});
+
+describe("isValidIsoDate", () => {
+  it("aceita datas reais e rejeita impossíveis ou fora do formato", () => {
+    expect(isValidIsoDate("2026-02-28")).toBe(true);
+    expect(isValidIsoDate("2026-02-30")).toBe(false);
+    expect(isValidIsoDate("2026-13-01")).toBe(false);
+    expect(isValidIsoDate("31/10")).toBe(false);
   });
 });

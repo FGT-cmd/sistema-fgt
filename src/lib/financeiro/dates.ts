@@ -50,3 +50,9 @@ export function monthLabel(month: string): string {
 export function round2(v: number): number {
   return Math.round(v * 100) / 100;
 }
+
+export function isValidIsoDate(d: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+  const parsed = new Date(`${d}T12:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === d;
+}

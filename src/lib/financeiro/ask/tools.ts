@@ -104,9 +104,12 @@ export function balances(d: AskData, p: { conta: string | null }) {
   const accounts = accountsOf(d.vocab).filter(
     (a) => !p.conta || normalizeLabel(a).includes(normalizeLabel(p.conta)),
   );
-  return accounts.map((account) =>
-    estimateBalance(account, latestSnapshot(d.snapshots, account), d.ledger, (m) => accountOfMethod(d.vocab, m)),
-  );
+  return accounts.map((account) => {
+    const est = estimateBalance(account, latestSnapshot(d.snapshots, account), d.ledger, (m) => accountOfMethod(d.vocab, m));
+    return est.balance === null
+      ? { conta: account, saldoEstimado: null, motivo: "sem extrato" }
+      : { conta: account, saldoEstimado: est.balance, baseExtrato: est.baseDate, lancamentosJaIncluidos: est.movementsAfter };
+  });
 }
 
 export function toReview(d: AskData) {

@@ -62,8 +62,8 @@ describe("ferramentas de leitura", () => {
   });
 
   it("saldo estimado por conta e lançamentos a revisar", () => {
-    const c6 = balances(data, { conta: "c6" }).find((b) => b.account === "C6");
-    expect(c6).toMatchObject({ balance: 5000 + 10000 - 4000 - 500 - 57 });
+    const c6 = balances(data, { conta: "c6" }).find((b) => b.conta === "C6");
+    expect(c6).toMatchObject({ saldoEstimado: 5000 + 10000 - 4000 - 500 - 57, baseExtrato: "2026-10-01", lancamentosJaIncluidos: 4 });
     expect(toReview(data).itens.map((i) => i.descricao)).toEqual(["ChatGPT"]);
   });
 

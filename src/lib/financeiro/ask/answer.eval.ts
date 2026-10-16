@@ -34,6 +34,7 @@ describe("perguntas reais — ask (gasta API)", () => {
   it("o que temos que pagar hoje? → só a Contabilidade atrasada", async () => {
     const t = await answerWithData("o que temos que pagar hoje?", data);
     console.log("[eval]", t);
+    expect(t).not.toMatch(/\*/);
     expect(t).toMatch(/contabilidade/i);
     expect(has(t, "398")).toBe(true);
     expect(t).not.toMatch(/cref/i);
@@ -41,6 +42,7 @@ describe("perguntas reais — ask (gasta API)", () => {
   it("quais contas estão em aberto? → as duas, total 842", async () => {
     const t = await answerWithData("quais contas estão em aberto?", data);
     console.log("[eval]", t);
+    expect(t).not.toMatch(/\*/);
     expect(t).toMatch(/cref/i);
     expect(t).toMatch(/contabilidade/i);
   });
@@ -48,18 +50,22 @@ describe("perguntas reais — ask (gasta API)", () => {
     // 5.000 (extrato de 01/10) + 10.000 (Pix C6) − 4.000 (prolabore) − 500 (reserva)
     const t = await answerWithData("qual nosso saldo no C6?", data);
     console.log("[eval]", t);
+    expect(t).not.toMatch(/\*/);
     expect(has(t, "10500")).toBe(true);
     expect(t).toMatch(/estimad/i);
+    expect(t).not.toMatch(/não est(á|ão) no cálculo/i);
   });
   it("qual o resultado do mês? → 5.000", async () => {
     // 10.000 de receita − 4.000 fixo − 1.000 investimento; reserva fica abaixo do resultado
     const t = await answerWithData("qual o resultado do mês?", data);
     console.log("[eval]", t);
+    expect(t).not.toMatch(/\*/);
     expect(has(t, "5000")).toBe(true);
   });
   it("quanto falta pra meta? → 25.000", async () => {
     const t = await answerWithData("quanto falta pra bater a meta do mês?", data);
     console.log("[eval]", t);
+    expect(t).not.toMatch(/\*/);
     expect(has(t, "25000")).toBe(true);
   });
 });

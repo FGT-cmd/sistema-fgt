@@ -15,7 +15,8 @@ export type ConfigRow = {
   order: number;
 };
 
-export type NamedMethod = { name: string; account: string };
+// account = conta real onde o dinheiro cai/sai; null quando a forma não é de nenhuma conta atual.
+export type NamedMethod = { name: string; account: string | null };
 
 export type Vocab = {
   incomeCategories: string[];
@@ -63,6 +64,18 @@ export const SEED_RECV_METHODS: NamedMethod[] = [
   { name: "Pix C6", account: "C6" },
   { name: "Dinheiro", account: "Dinheiro" },
 ];
+
+// Nomes de forma de pagamento antigos (antes do vocabulário oficial), já gravados
+// em lançamentos e vendas. Decisão do Fernando: "Pix" caía no C6, "Cartão" na
+// InfinitePay; "Plataforma" (Herospark) não é conta atual. Chave normalizada.
+export const LEGACY_METHOD_ACCOUNTS: Readonly<Record<string, string | null>> = {
+  pix: "C6",
+  cartao: "InfinitePay",
+  plataforma: null,
+};
+
+// Parcela de venda sem forma de pagamento: recebida pela InfinitePay (decisão do Fernando).
+export const SALE_DEFAULT_ACCOUNT = "InfinitePay";
 
 export type SeedRecurringCost = {
   category: string;
@@ -147,6 +160,23 @@ function seedAccount(name: string): string | null {
   );
 }
 
+function isLegacyMethod(name: string): boolean {
+  return Object.hasOwn(LEGACY_METHOD_ACCOUNTS, normalizeLabel(name));
+}
+
+function legacyAccount(name: string): string | null {
+  return isLegacyMethod(name) ? LEGACY_METHOD_ACCOUNTS[normalizeLabel(name)] : null;
+}
+
+// Conta de uma linha de config: a gravada (se não for um nome antigo de forma),
+// senão a do seed, senão a do mapa de nomes antigos. Nunca inventa conta com o
+// nome da própria forma.
+function rowAccount(r: ConfigRow): string | null {
+  if (r.account && !isLegacyMethod(r.account)) return r.account;
+  if (r.account) return legacyAccount(r.account);
+  return seedAccount(r.value) ?? legacyAccount(r.value);
+}
+
 function asGroup(group: string | null, name: string): ExpenseGroup {
   if (group && (EXPENSE_GROUPS as string[]).includes(group)) return group as ExpenseGroup;
   return seedGroup(name) ?? "despesa";
@@ -155,10 +185,7 @@ function asGroup(group: string | null, name: string): ExpenseGroup {
 export function buildVocab(rows: ConfigRow[]): Vocab {
   const active = rows.filter((r) => r.active).sort((a, b) => a.order - b.order);
   const of = (t: ConfigType) => active.filter((r) => r.type === t);
-  const method = (r: ConfigRow): NamedMethod => ({
-    name: r.value,
-    account: r.account ?? seedAccount(r.value) ?? r.value,
-  });
+  const method = (r: ConfigRow): NamedMethod => ({ name: r.value, account: rowAccount(r) });
   return {
     incomeCategories: of("income_cat").map((r) => r.value),
     expenseCategories: of("expense_cat").map((r) => ({ name: r.value, group: asGroup(r.group, r.value) })),
@@ -170,7 +197,8 @@ export function buildVocab(rows: ConfigRow[]): Vocab {
 export function accountOfMethod(vocab: Vocab, method: string | null | undefined): string | null {
   if (!method) return null;
   const n = normalizeLabel(method);
-  return [...vocab.payMethods, ...vocab.recvMethods].find((m) => normalizeLabel(m.name) === n)?.account ?? null;
+  const known = [...vocab.payMethods, ...vocab.recvMethods].find((m) => normalizeLabel(m.name) === n);
+  return known ? known.account : legacyAccount(method);
 }
 
 export function groupOfCategory(vocab: Vocab, category: string): ExpenseGroup | null {
@@ -178,8 +206,11 @@ export function groupOfCategory(vocab: Vocab, category: string): ExpenseGroup | 
   return vocab.expenseCategories.find((c) => normalizeLabel(c.name) === n)?.group ?? null;
 }
 
+// Só contas reais: formas sem conta (ou nomes antigos sem conta atual) ficam de fora.
 export function accountsOf(vocab: Vocab): string[] {
-  return [...new Set([...vocab.payMethods, ...vocab.recvMethods].map((m) => m.account))];
+  return [...new Set(
+    [...vocab.payMethods, ...vocab.recvMethods].map((m) => m.account).filter((a): a is string => !!a),
+  )];
 }
 
 export function methodsForAccount(vocab: Vocab, account: string): string[] {

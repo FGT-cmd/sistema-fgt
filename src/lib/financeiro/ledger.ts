@@ -4,6 +4,7 @@
 
 import type { SaleTx } from "./saleTxs";
 import { addDays, isoDate } from "./dates";
+import { normalizeLabel } from "./vocab";
 
 export type EntryKind = "receita" | "despesa";
 export type EntryStatus = "pago" | "pendente" | "cancelado";
@@ -70,9 +71,22 @@ export function txToEntry(t: TxRow): LedgerEntry {
   };
 }
 
+// Cartão/InfinitePay: o dinheiro cai na data de caixa (dueDate da linha de caixa).
+// Sem forma conta como InfinitePay (decisão do Fernando), então também usa a data de caixa.
+function isCardLike(method: string | null): boolean {
+  if (!method) return true;
+  const n = normalizeLabel(method);
+  return n.includes("cartao") || n.includes("credito") || n.includes("infinitepay");
+}
+
 export function saleCaixaToEntry(s: SaleTx): LedgerEntry | null {
   if (s._flow !== "caixa" || !s._installmentId) return null;
-  const date = (s.dueDate ?? s.paidAt)?.slice(0, 10);
+  const status = normalizeStatus(s.status);
+  // Parcela paga fora do cartão (pix, dinheiro): o dinheiro entrou no dia do pagamento.
+  const effective = status === "pago" && !isCardLike(s.paymentMethod)
+    ? (s.paidAt ?? s.dueDate)
+    : (s.dueDate ?? s.paidAt);
+  const date = effective?.slice(0, 10);
   if (!date) return null;
   return {
     ref: `inst:${s._installmentId}`,
@@ -80,7 +94,7 @@ export function saleCaixaToEntry(s: SaleTx): LedgerEntry | null {
     amount: s.amount,
     category: "Venda",
     description: s.description,
-    status: normalizeStatus(s.status),
+    status,
     date,
     dueDate: s.dueDate?.slice(0, 10) ?? null,
     paidAt: s.paidAt?.slice(0, 10) ?? null,
@@ -112,7 +126,8 @@ export function selectOpenItems(entries: LedgerEntry[], today: string): LedgerEn
   const from = addDays(today, -60);
   const to = addDays(today, 45);
   return entries
-    .filter((e) => e.status === "pendente")
+    // amount 0 = mensagem não entendida guardada pra revisar, não é conta a pagar.
+    .filter((e) => e.status === "pendente" && e.amount > 0)
     .filter((e) => {
       const d = e.dueDate ?? e.date;
       return d >= from && d <= to;

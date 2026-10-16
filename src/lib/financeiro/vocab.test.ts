@@ -62,6 +62,39 @@ describe("buildVocab", () => {
   });
 });
 
+describe("nomes antigos de forma de pagamento", () => {
+  const vocab = buildVocab([
+    ...planSeed([]).create.map((c, i) => row({ ...c, id: String(i) })),
+    row({ type: "recv_method", value: "Pix", order: 9 }),
+    row({ type: "pay_method", value: "Cartão", order: 9 }),
+    row({ type: "recv_method", value: "Plataforma", order: 10 }),
+    row({ type: "pay_method", value: "Boleto", order: 11 }),
+  ]);
+
+  it("Pix cai no C6, Cartão na InfinitePay, Plataforma em nenhuma conta", () => {
+    expect(accountOfMethod(vocab, "Pix")).toBe("C6");
+    expect(accountOfMethod(vocab, "cartão")).toBe("InfinitePay");
+    expect(accountOfMethod(vocab, "Plataforma")).toBeNull();
+  });
+
+  it("vale também para nome antigo que nem está mais no vocabulário", () => {
+    const seedOnly = buildVocab(planSeed([]).create.map((c, i) => row({ ...c, id: String(i) })));
+    expect(accountOfMethod(seedOnly, "pix")).toBe("C6");
+    expect(accountOfMethod(seedOnly, "Cartao")).toBe("InfinitePay");
+    expect(accountOfMethod(seedOnly, "plataforma")).toBeNull();
+    expect(accountOfMethod(seedOnly, "Transferência")).toBeNull();
+  });
+
+  it("linha antiga gravada com a própria forma como conta não vira conta fantasma", () => {
+    const v = buildVocab([row({ type: "recv_method", value: "Pix", account: "Pix" })]);
+    expect(v.recvMethods).toEqual([{ name: "Pix", account: "C6" }]);
+  });
+
+  it("accountsOf lista só contas reais", () => {
+    expect(accountsOf(vocab).sort()).toEqual(["C6", "Cartão Natália", "Dinheiro", "InfinitePay", "Nubank PF"]);
+  });
+});
+
 describe("matchLabel", () => {
   it("casa ignorando acento, caixa e espaços extras", () => {
     expect(matchLabel(["Estagiário", "INSS"], "  estagiario ")).toBe("Estagiário");

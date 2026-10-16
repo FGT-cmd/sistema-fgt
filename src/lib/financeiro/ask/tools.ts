@@ -4,9 +4,9 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { entriesBetween, type LedgerEntry } from "../ledger";
 import {
-  accountOfMethod, accountsOf, groupOfCategory, normalizeLabel, type ExpenseGroup, type Vocab,
+  accountsOf, groupOfCategory, normalizeLabel, type ExpenseGroup, type Vocab,
 } from "../vocab";
-import { estimateBalance, latestSnapshot, type BalanceSnapshot } from "../balance";
+import { entryAccount, estimateBalance, latestSnapshot, type BalanceSnapshot } from "../balance";
 import { round2 } from "../dates";
 
 export type AskData = {
@@ -24,7 +24,8 @@ const realized = (d: AskData) => d.ledger.filter((e) => e.status === "pago");
 export function openBills(d: AskData, p: { tipo: "pagar" | "receber" | "ambos"; ate: string | null }) {
   const kinds = p.tipo === "pagar" ? ["despesa"] : p.tipo === "receber" ? ["receita"] : ["despesa", "receita"];
   const items = d.ledger
-    .filter((e) => e.status === "pendente" && kinds.includes(e.kind))
+    // amount 0 = mensagem não entendida guardada pra revisar, não é conta.
+    .filter((e) => e.status === "pendente" && e.amount > 0 && kinds.includes(e.kind))
     .filter((e) => !p.ate || (e.dueDate ?? e.date) <= p.ate)
     .sort((a, b) => (a.dueDate ?? a.date).localeCompare(b.dueDate ?? b.date));
   return {
@@ -101,15 +102,26 @@ export function goalsProgress(d: AskData, p: { mes: string }) {
 }
 
 export function balances(d: AskData, p: { conta: string | null }) {
+  const accountOf = (e: LedgerEntry) => entryAccount(d.vocab, e);
   const accounts = accountsOf(d.vocab).filter(
     (a) => !p.conta || normalizeLabel(a).includes(normalizeLabel(p.conta)),
   );
-  return accounts.map((account) => {
-    const est = estimateBalance(account, latestSnapshot(d.snapshots, account), d.ledger, (m) => accountOfMethod(d.vocab, m));
+  const contas = accounts.map((account) => {
+    const est = estimateBalance(account, latestSnapshot(d.snapshots, account), d.ledger, accountOf);
     return est.balance === null
       ? { conta: account, saldoEstimado: null, motivo: "sem extrato" }
       : { conta: account, saldoEstimado: est.balance, baseExtrato: est.baseDate, lancamentosJaIncluidos: est.movementsAfter };
   });
+  // Realizados depois do extrato mais antigo que não dá pra ligar a nenhuma conta:
+  // não entram em saldo nenhum, e a resposta precisa dizer isso.
+  const base = d.snapshots.map((s) => s.asOf).sort()[0] ?? null;
+  const semConta = base
+    ? d.ledger.filter((e) => e.status === "pago" && e.date > base && accountOf(e) === null)
+    : [];
+  return {
+    contas,
+    lancamentosSemConta: { quantidade: semConta.length, total: sum(semConta), desde: base },
+  };
 }
 
 export function toReview(d: AskData) {
@@ -135,7 +147,7 @@ export const ASK_TOOLS: Anthropic.Tool[] = [
   },
   {
     name: "saldo_estimado",
-    description: "Saldo estimado por conta (último extrato enviado + lançamentos depois). conta = null para todas.",
+    description: "Saldo estimado por conta (último extrato enviado + lançamentos depois). conta = null para todas. lancamentosSemConta = lançamentos realizados depois do extrato que não têm conta identificada e por isso não entram em nenhum saldo; se quantidade > 0, avise o Fernando.",
     input_schema: {
       type: "object",
       additionalProperties: false,

@@ -25,6 +25,7 @@ const data: AskData = {
     e({ ref: "tx:cref", amount: 444, status: "pendente", date: "2026-10-31", dueDate: "2026-10-31", paidAt: null, description: "CREF" }),
     e({ ref: "tx:atras", amount: 398, status: "pendente", date: "2026-10-10", dueDate: "2026-10-10", paidAt: null, description: "Contabilidade" }),
     e({ ref: "tx:rev", amount: 57, needsReview: true, description: "ChatGPT", date: "2026-10-15", paidAt: "2026-10-15" }),
+    e({ ref: "tx:naoentendida", amount: 0, status: "pendente", date: "2026-10-16", dueDate: "2026-10-16", paidAt: null, needsReview: true, description: "blabla" }),
   ],
 };
 
@@ -62,13 +63,34 @@ describe("ferramentas de leitura", () => {
   });
 
   it("saldo estimado por conta e lançamentos a revisar", () => {
-    const c6 = balances(data, { conta: "c6" }).find((b) => b.conta === "C6");
+    const c6 = balances(data, { conta: "c6" }).contas.find((b) => b.conta === "C6");
     expect(c6).toMatchObject({ saldoEstimado: 5000 + 10000 - 4000 - 500 - 57, baseExtrato: "2026-10-01", lancamentosJaIncluidos: 4 });
-    expect(toReview(data).itens.map((i) => i.descricao)).toEqual(["ChatGPT"]);
+    expect(toReview(data).itens.map((i) => i.descricao)).toEqual(["ChatGPT", "blabla"]);
+  });
+
+  it("saldo inclui nomes antigos e parcela de venda sem forma; o que não tem conta é avisado", () => {
+    const d: AskData = {
+      ...data,
+      snapshots: [...data.snapshots, { account: "InfinitePay", balance: 0, asOf: "2026-10-03" }],
+      ledger: [
+        e({ ref: "tx:pix", kind: "receita", amount: 300, paymentMethod: "Pix" }),
+        e({ ref: "inst:cartao", kind: "receita", amount: 700, paymentMethod: "Cartão", source: "venda" }),
+        e({ ref: "inst:semforma", kind: "receita", amount: 900, paymentMethod: null, source: "venda" }),
+        e({ ref: "tx:plataforma", kind: "receita", amount: 50, paymentMethod: "Plataforma" }),
+        e({ ref: "tx:semforma", amount: 20, paymentMethod: null }),
+        e({ ref: "tx:antes", amount: 999, paymentMethod: null, date: "2026-09-30", paidAt: "2026-09-30" }),
+      ],
+    };
+    const r = balances(d, { conta: null });
+    expect(r.contas.map((c) => c.conta).sort()).toEqual(["C6", "Cartão Natália", "Dinheiro", "InfinitePay", "Nubank PF"]);
+    expect(r.contas.find((c) => c.conta === "C6")).toMatchObject({ saldoEstimado: 5300, lancamentosJaIncluidos: 1 });
+    expect(r.contas.find((c) => c.conta === "InfinitePay")).toMatchObject({ saldoEstimado: 1600, lancamentosJaIncluidos: 2 });
+    expect(r.lancamentosSemConta).toEqual({ quantidade: 2, total: 70, desde: "2026-10-01" });
   });
 
   it("runAskTool despacha pelo nome e acusa ferramenta desconhecida", () => {
     expect(runAskTool("contas_em_aberto", { tipo: "pagar", ate: "2026-10-16" }, data)).toMatchObject({ quantidade: 1 });
+    expect(runAskTool("saldo_estimado", { conta: null }, data)).toMatchObject({ lancamentosSemConta: { quantidade: 0 } });
     expect(runAskTool("nao_existe", {}, data)).toEqual({ erro: "ferramenta desconhecida: nao_existe" });
   });
 });

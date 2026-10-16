@@ -44,7 +44,22 @@ describe("ledger", () => {
       saleLine({ id: "inst_i1", _flow: "caixa" }),
     ]);
     expect(ledger).toHaveLength(1);
-    expect(ledger[0]).toMatchObject({ ref: "inst:i1", kind: "receita", source: "venda", date: "2026-08-05", clientName: "Aleska" });
+    // Pix pago: o dinheiro entrou no dia do pagamento, não na data de caixa.
+    expect(ledger[0]).toMatchObject({ ref: "inst:i1", kind: "receita", source: "venda", date: "2026-08-04", clientName: "Aleska" });
+  });
+
+  it("parcela de cartão (ou sem forma, que é InfinitePay) fica na data de caixa", () => {
+    const ledger = buildLedger([], [
+      saleLine({ id: "inst_i2", _flow: "caixa", _installmentId: "i2", paymentMethod: "Cartão de crédito" }),
+      saleLine({ id: "inst_i3", _flow: "caixa", _installmentId: "i3", paymentMethod: "InfinitePay" }),
+      saleLine({ id: "inst_i4", _flow: "caixa", _installmentId: "i4", paymentMethod: null }),
+    ]);
+    expect(ledger.map((e) => e.date)).toEqual(["2026-08-05", "2026-08-05", "2026-08-05"]);
+  });
+
+  it("parcela pendente usa a data de caixa mesmo no pix", () => {
+    const [e] = buildLedger([], [saleLine({ id: "inst_i1", _flow: "caixa", status: "pendente", paidAt: null })]);
+    expect(e.date).toBe("2026-08-05");
   });
 
   it("cancelados ficam de fora e a lista sai ordenada por data", () => {
@@ -62,6 +77,7 @@ describe("ledger", () => {
       tx({ id: "velho", status: "pendente", dueDate: new Date("2026-05-01T12:00:00Z") }),
       tx({ id: "perto", status: "pendente", dueDate: new Date("2026-10-31T12:00:00Z") }),
       tx({ id: "pago", status: "pago", paidAt: new Date("2026-10-10T12:00:00Z") }),
+      tx({ id: "naoentendida", status: "pendente", amount: 0, dueDate: new Date("2026-10-16T12:00:00Z") }),
     ], []);
     expect(selectOpenItems(ledger, "2026-10-16").map((e) => e.ref)).toEqual(["tx:perto"]);
   });

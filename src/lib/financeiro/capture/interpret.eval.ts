@@ -127,4 +127,17 @@ describe("interpretação real — categorize (gasta API)", () => {
     expect(cat("t4")).toBe("Contabilidade");
     expect(ignored).toBe(0);
   });
+  it("restaurante com sinal de cliente → baixa confiança, alternativa não-Prolabore", async () => {
+    const { drafts } = await categorizeStatementRows(
+      ctx, [{ date: "2025-10-25", amount: -180, description: "RESTAURANTE SABOR DO SUL - almoço cliente Bruna", externalId: "t5" }], "C6");
+    console.log("[eval] categorize t5 →", drafts);
+    expect(drafts[0].needsReview).toBe(true);
+    expect(drafts[0].alternatives.some((c) => c !== "Prolabore")).toBe(true);
+  });
+  it("pagamento de fatura do cartão → ignorado", async () => {
+    const { drafts, ignored } = await categorizeStatementRows(
+      ctx, [{ date: "2025-10-26", amount: -1500, description: "Pagamento de fatura cartão Nubank", externalId: "t6" }], "C6");
+    console.log("[eval] categorize t6 →", drafts, ignored);
+    expect(ignored).toBe(1);
+  });
 });

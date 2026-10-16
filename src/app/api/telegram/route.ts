@@ -42,7 +42,7 @@ type TgCallback = { id: string; data?: string; message?: { chat: { id: number | 
 
 const allowed = (chatId: string) => !ALLOWED_CHAT || chatId === ALLOWED_CHAT;
 
-async function processText(chatId: string, text: string): Promise<void> {
+async function processTextInner(chatId: string, text: string, ref: { eventId?: string }): Promise<void> {
   console.log("[telegram] received", chatId, text);
 
   // ── 1. Criar evento imediatamente ──────────────────────────────
@@ -54,6 +54,7 @@ async function processText(chatId: string, text: string): Promise<void> {
     },
   });
   const eventId = initialEvent.id;
+  ref.eventId = eventId;
 
   // ── 2. Chat bloqueado ──────────────────────────────────────────
   if (!allowed(chatId)) {
@@ -67,10 +68,22 @@ async function processText(chatId: string, text: string): Promise<void> {
   // ── 3. Correção de comprovante pendente ────────────────────────
   const correction = await takeCorrection();
   if (correction) {
-    const r = await captureText(
-      `Lançamento de um comprovante que eu tinha entendido assim: ${correction}. Correção do Fernando: ${text}`,
-      "telegram",
-    );
+    let r;
+    try {
+      r = await captureText(
+        `Lançamento de um comprovante que eu tinha entendido assim: ${correction}. Correção do Fernando: ${text}`,
+        "telegram",
+      );
+    } catch (err) {
+      console.error("[telegram] correction", err);
+      const msg = "Não consegui registrar a correção agora. Me manda de novo o lançamento certo em texto.";
+      await prisma.openClawEvent.update({
+        where: { id: eventId },
+        data: { interpretedIntent: "finance_capture", executionStatus: "failed", errorMessage: String(err), response: msg },
+      }).catch(() => {});
+      await sendTelegramMessage(chatId, msg);
+      return;
+    }
     await prisma.openClawEvent.update({
       where: { id: eventId },
       data: { interpretedIntent: "finance_capture", executionStatus: "executed", response: r.summary },
@@ -107,6 +120,25 @@ async function processText(chatId: string, text: string): Promise<void> {
   }
 
   await sendTelegramMessage(chatId, result.response, { buttons: result.buttons });
+}
+
+async function processText(chatId: string, text: string): Promise<void> {
+  const ref: { eventId?: string } = {};
+  try {
+    await processTextInner(chatId, text, ref);
+  } catch (err) {
+    console.error("[telegram] text", err);
+    const msg = "Sistema operacional indisponível no momento. Tente novamente em instantes.";
+    if (ref.eventId) {
+      try {
+        await prisma.openClawEvent.update({
+          where: { id: ref.eventId },
+          data: { executionStatus: "failed", errorMessage: String(err), response: msg },
+        });
+      } catch { /* best effort */ }
+    }
+    await sendTelegramMessage(chatId, msg);
+  }
 }
 
 async function processMedia(chatId: string, message: TgMessage): Promise<void> {

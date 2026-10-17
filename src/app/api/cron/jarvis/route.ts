@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDailyPendingSummary } from "@/lib/openclaw/actions";
 import { sendTelegramMessage } from "@/lib/telegram";
+import { runTickTickSync } from "@/lib/ticktick/syncRunner";
 import { getDefaultUser } from "@/lib/user";
 import { prisma } from "@/lib/prisma";
 import { generateRecurringForMonth } from "@/lib/financeiro/recurringRunner";
@@ -59,6 +60,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   try {
     const user = await getDefaultUser();
+    if (slot === "morning" && process.env.TICKTICK_SYNC_ENABLED === "true") {
+      await runTickTickSync().catch(err => console.error("[cron/jarvis] ticktick", err));
+    }
     if (slot === "monthly") {
       const month = todaySaoPaulo().slice(0, 7);
       const created = await generateRecurringForMonth(user.id, month);

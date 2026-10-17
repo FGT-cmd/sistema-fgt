@@ -587,6 +587,14 @@ model TodoTask {
   urgent      Boolean?
   important   Boolean?
   completedAt DateTime?
+  tickTickId        String?   @unique
+  tickTickProjectId String?
+  tickTickEtag      String?
+  tickTickModified  DateTime?
+  syncedAt          DateTime?
+  allDay            Boolean   @default(true)
+  isRecurring       Boolean   @default(false)
+  listName          String?
   clientId    String?
   userId      String
   createdAt   DateTime  @default(now())
@@ -828,4 +836,16 @@ model CapturePending {
   expiresAt DateTime
 
   @@index([chatId, kind])
+}
+
+// Estado da sincronização com o TickTick (uma linha, id "main")
+model TickTickSyncState {
+  id           String    @id @default("main")
+  lockToken    String?
+  runningSince DateTime?
+  lastRunAt    DateTime?
+  lastOkAt     DateTime?
+  lastError    String?
+  authBroken   Boolean   @default(false)
+  updatedAt    DateTime  @updatedAt
 }

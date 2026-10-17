@@ -1,4 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
+import { runTickTickSync } from "@/lib/ticktick/syncRunner";
+import { parseTaskInput, TaskInputError } from "@/lib/ticktick/taskInput";
 import { prisma } from "@/lib/prisma";
 import { getDefaultUser } from "@/lib/user";
 
@@ -73,13 +75,18 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const user = await getDefaultUser();
-    const body = await req.json();
+    const body = parseTaskInput(await req.json(), true);
+    if (body.clientId && !(await prisma.client.findFirst({ where: { id: body.clientId, userId: user.id }, select: { id: true } }))) return NextResponse.json({ error: "Aluno não encontrado" }, { status: 400 });
 
     const task = await prisma.todoTask.create({
       data: {
-        title:       body.title,
+        title:       body.title!,
         description: body.description || null,
-        dueDate:     body.dueDate ? new Date(body.dueDate) : null,
+        dueDate:     body.dueDate ?? null,
+        allDay: body.allDay ?? true,
+        listName: body.listName ?? null,
+        status: body.status ?? "pending",
+        completedAt: body.completedAt ?? null,
         type:        body.type     || "general",
         priority:    body.priority || "media",
         source:      body.source   || "manual",
@@ -94,8 +101,10 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    after(async () => { try { await runTickTickSync(); } catch (err) { console.error("[tarefas/sync]", err); } });
     return NextResponse.json(task);
   } catch (err) {
+    if (err instanceof TaskInputError || err instanceof SyntaxError) return NextResponse.json({ error: err.message }, { status: 400 });
     console.error("[POST /api/tarefas]", err);
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }

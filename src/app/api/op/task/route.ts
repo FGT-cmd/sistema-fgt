@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
+import { runTickTickSync } from "@/lib/ticktick/syncRunner";
 import { createTask } from "@/lib/openclaw/actions";
 import { getDefaultUser } from "@/lib/user";
 import type { OCCreateTaskData, OCEnriched } from "@/lib/openclaw/types";
@@ -57,6 +58,9 @@ export async function POST(req: NextRequest) {
 
   try {
     const text = await createTask(d, enr, user.id);
+    if (process.env.TICKTICK_SYNC_ENABLED === "true") after(async () => {
+      try { await runTickTickSync(); } catch (err) { console.error("[op/task] ticktick", err); }
+    });
     return NextResponse.json({ text });
   } catch (err) {
     console.error("[POST /api/op/task]", err);

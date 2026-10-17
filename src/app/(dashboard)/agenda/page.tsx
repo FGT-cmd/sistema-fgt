@@ -132,9 +132,7 @@ export default function AgendaPage() {
   return <div className="min-w-0 p-3 sm:p-6">
     <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
       <div>
-        <h1 className="text-3xl text-gray-900" style={{
-          fontFamily: "var(--font-agenda-serif)"
-        }}>
+        <h1 className="text-3xl font-semibold text-gray-900">
           Agenda
         </h1>
         <p className="mt-1 text-sm text-gray-500">

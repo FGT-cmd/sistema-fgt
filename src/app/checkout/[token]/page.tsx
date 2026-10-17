@@ -1,21 +1,8 @@
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import Image from "next/image";
-import { DM_Serif_Display, Manrope } from "next/font/google";
 import { prisma } from "@/lib/prisma";
 import { CheckoutClient, CheckoutSummary, type CheckoutPageMode } from "./checkout-client";
-
-const dmSerifDisplay = DM_Serif_Display({
-  weight: "400",
-  subsets: ["latin"],
-  variable: "--font-checkout-serif",
-});
-
-const manrope = Manrope({
-  weight: ["400", "500", "600", "700", "800"],
-  subsets: ["latin"],
-  variable: "--font-checkout-sans",
-});
 
 type PageProps = { params: Promise<{ token: string }> };
 
@@ -45,10 +32,9 @@ export default async function CheckoutTokenPage({ params }: PageProps) {
 
   return (
     <div
-      className={`${dmSerifDisplay.variable} ${manrope.variable} min-h-screen px-4 py-12`}
+      className="min-h-screen px-4 py-12"
       style={{
         background: "linear-gradient(to bottom, #1a0a12 0%, #000 10%, #000 90%, #1a0a12 100%)",
-        fontFamily: "var(--font-checkout-sans)",
       }}
     >
       <div className="mx-auto w-full max-w-md">
@@ -62,8 +48,8 @@ export default async function CheckoutTokenPage({ params }: PageProps) {
             priority
           />
           <h1
-            className="text-3xl"
-            style={{ fontFamily: "var(--font-checkout-serif)", color: "#fff" }}
+            className="text-3xl font-semibold"
+            style={{ color: "#fff" }}
           >
             Checkout
           </h1>

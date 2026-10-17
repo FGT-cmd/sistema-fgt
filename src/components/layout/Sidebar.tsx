@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard,CheckSquare,DollarSign,Users,FolderKanban,Bot,Lightbulb,Calendar,Settings,FolderOpen,GraduationCap,Menu,X } from "lucide-react";
+import { LayoutDashboard,CheckSquare,DollarSign,Users,FolderKanban,Bot,Lightbulb,Calendar,Settings,FolderOpen,Menu,X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // V1 core modules (top)
@@ -30,10 +30,6 @@ const secondaryNav=[{
   href: "/crm",
   icon: FolderKanban,
   label: "CRM"
-},{
-  href: "/crm-alunos",
-  icon: GraduationCap,
-  label: "CRM Alunos"
 },{
   href: "/agenda",
   icon: Calendar,
